@@ -18,6 +18,7 @@ sudo apt install ffmpeg
 ```
 
 **Set up a `conda` environment**
+NOTE: do *not* do this if you are setting up this repo in a Lightning Studio.
 
 ```
 conda create --yes --name labeler python=3.8
