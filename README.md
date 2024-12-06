@@ -47,7 +47,7 @@ cd ..
 **Install `lp3d-analysis` package locally**
 
 ```
-git clone https://github.com/paninski-lab/keypoint-pseudo-labeler.git
+git clone https://github.com/paninski-lab/lp3d-analysis.git
 cd lp3d-analysis
 pip install -e .
 cd ..
