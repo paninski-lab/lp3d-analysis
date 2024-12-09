@@ -22,7 +22,7 @@ sudo apt install ffmpeg
 NOTE: do *not* do this if you are setting up this repo in a Lightning Studio.
 
 ```
-conda create --yes --name labeler python=3.8
+conda create --yes --name labeler python=3.10
 conda activate labeler
 ```
 
