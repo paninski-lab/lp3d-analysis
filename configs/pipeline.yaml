@@ -1,37 +1,50 @@
 # absolute path to lp yaml file
-lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_mirror-mouse.yaml
+lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_mirror-mouse-separate.yaml
 # lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_crim13.yaml
 
 # [needed?] pipeline seed for initial data split
 pipeline_seeds: 0
+
+intermediate_results_dir: testing
 
 # initial training of an ensemble of networks
 train_networks:
   # run this section?
   run: True
   # overwrite previous results?
-  overwrite: False 
+  overwrite: False
   # pose estimation data type
   # data_type: lp
   # ensemble seeds
   ensemble_seeds:
     - 0
-    - 1
-    - 2
-    - 3
-    - 4
+    # - 1
+    # - 2
+    # - 3
+    # - 4
   # number of ground truth labels for training
-  n_hand_labels: 100
+  n_hand_labels: 
+    - 100
   # model type
   model_types:
     - supervised
-    - context
+    #- context
+  # run inference on videos in these directories (independent of training videos)
+  inference_dirs:
+    # - videos_new
+    # - videos-for-each-labeled-frame
+    - videos_debug
   # training parameters
-  min_steps: 5000
-  max_steps: 5000
+  # min_steps: 5000
+  # max_steps: 5000
+  # milestone_steps: [2000, 3000, 4000]
+  # val_check_interval: 50
+  # train_check_interval: 10
+  min_steps: 50
+  max_steps: 50
   milestone_steps: [2000, 3000, 4000]
-  val_check_interval: 50
-  train_check_interval: 10
+  val_check_interval: 5
+  train_check_interval: 5
 
 # post-processing options
 post_processing:

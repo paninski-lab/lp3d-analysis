@@ -5,6 +5,14 @@ from lp3d_analysis.io import load_cfgs
 from lp3d_analysis.train import train_and_infer
 
 
+# TODO
+# - before train_and_infer, will be nice to put cfg updates in their own function
+
+VALID_MODEL_TYPES = [
+    'supervised',
+    'context',
+]
+
 def pipeline(config_file: str):
 
     # -------------------------------------------
@@ -14,32 +22,53 @@ def pipeline(config_file: str):
     # load cfg (pipeline yaml) and cfg_lp (lp yaml)
     cfg_pipe, cfg_lp = load_cfgs(config_file)  # cfg_lp is a DictConfig, cfg is not
     
-
     # Define + create directories
     data_dir = cfg_lp.data.data_dir
     pipeline_script_dir = os.path.dirname(os.path.abspath(__file__))
     outputs_dir = os.path.join(pipeline_script_dir, f'../../outputs/{os.path.basename(data_dir)}')
-
-#     # Build list of video names from the video directory
-#     num_videos, video_names = find_video_names(data_dir, cfg["video_directories"])
-#     print(f'Found {num_videos} videos: {video_names}.')
 
     # -------------------------------------------------------------------------------------
     # Train ensembles
     # -------------------------------------------------------------------------------------
 
     if cfg_pipe.train_networks.run:
-        
-        for rng_seed in cfg_pipe.train_networks.ensemble_seeds:
-            # Main function call
-            train_and_infer(
-                cfg_pipe=cfg_pipe.copy(),
-                cfg_lp=cfg_lp.copy(),
-                rng_seed=rng_seed,
-                data_dir=data_dir,
-                results_dir=results_dir,  # TODO
-                overwrite=cfg_pipe.train_networks.overwrite,
-            )
+        for model_type in cfg_pipe.train_networks.model_types:
+            for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
+                for rng_seed in cfg_pipe.train_networks.ensemble_seeds:
+                    print(
+                        f'fitting {model_type} model (rng_seed={rng_seed}) with {n_hand_labels}' 
+                        f'hand labels'
+                    )
+                    # specify output directory
+                    results_dir = os.path.join(  # @lenny can update this how you see fit
+                        outputs_dir, cfg_pipe.intermediate_results_dir, 
+                        f'{model_type}-{n_hand_labels}-{rng_seed}',
+                    )
+                    # update cfg_lp
+                    cfg_lp_copy = cfg_lp.copy()
+                    cfg_lp_copy.training.rng_seed_data_pt = rng_seed
+                    cfg_lp_copy.training.rng_seed_model_pt = rng_seed
+                    cfg_lp_copy.training.train_frames = n_hand_labels
+                    if model_type == 'supervised':
+                        cfg_lp_copy.model.model_type = 'heatmap'
+                        cfg_lp_copy.model.losses_to_use = []
+                    elif model_type == 'context':
+                        cfg_lp_copy.model.model_type = 'heatmap_mhcrnn'
+                        cfg_lp_copy.model.losses_to_use = []
+                    else:
+                        raise ValueError(
+                            f'{model_type} is not a valid model type in pipeline cfg; must choose'
+                            f'from {VALID_MODEL_TYPES} or add a new model type'
+                        )
+                    # Main function call
+                    train_and_infer(
+                        cfg_pipe=cfg_pipe.copy(),
+                        cfg_lp=cfg_lp_copy,
+                        data_dir=data_dir,
+                        results_dir=results_dir,
+                        inference_dirs=cfg_pipe.train_networks.inference_dirs,
+                        overwrite=cfg_pipe.train_networks.overwrite,
+                    )
 
 #     # # # -------------------------------------------------------------------------------------
 #     # # # Post-process network outputs to generate potential pseudo labels (chosen in next step)
