@@ -19,8 +19,14 @@ from lightning_pose.utils.io import (check_video_paths,
 from lightning_pose.utils.predictions import (predict_dataset,
                                               predict_single_video)
 from lightning_pose.utils.scripts import (  # get_callbacks,
-    calculate_train_batches, compute_metrics, get_data_module, get_dataset,
-    get_imgaug_transform, get_loss_factories, get_model)
+    calculate_train_batches, 
+    compute_metrics,
+    get_data_module, 
+    get_dataset,
+    get_imgaug_transform, 
+    get_loss_factories, 
+    get_model,
+)
 from moviepy.editor import VideoFileClip
 from omegaconf import DictConfig, OmegaConf
 from typeguard import typechecked
@@ -420,11 +426,24 @@ def train_and_infer(
     
     # Run inference on all InD/OOD videos and compute unsupervised metrics
     for video_dir in inference_dirs:
-        video_files = \
-            [f for f in os.listdir(os.path.join(data_dir, video_dir)) if f.endswith('.mp4')]
+        
+        video_files = [
+            f for f in os.listdir(os.path.join(data_dir, video_dir)) if f.endswith('.mp4')
+        ]
+
+        if len(video_files) == 0:
+            # assume we have a nested directory: directories full of mp4 files
+            video_files = []
+            sub_video_dirs = os.listdir(os.path.join(data_dir, video_dir))
+            for sub_video_dir in sub_video_dirs:
+                sub_video_dir_abs = os.path.join(data_dir, video_dir, sub_video_dir)
+                files_tmp = os.listdir(sub_video_dir_abs)
+                video_files += [f'{sub_video_dir}/{f}' for f in files_tmp if f.endswith('.mp4')]
+        
         for video_file in video_files:
             if csv_prefix:
-                inference_csv_name = f'{csv_prefix}_{video_file.replace(".mp4", ".csv")}'
+                raise NotImplementedError
+                # inference_csv_name = f'{csv_prefix}_{video_file.replace(".mp4", ".csv")}'
             else:
                 inference_csv_name = video_file.replace(".mp4", ".csv")
             inference_csv = os.path.join(results_dir, video_dir, inference_csv_name)

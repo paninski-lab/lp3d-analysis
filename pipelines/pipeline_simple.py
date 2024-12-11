@@ -3,15 +3,20 @@ import os
 
 from lp3d_analysis.io import load_cfgs
 from lp3d_analysis.train import train_and_infer
+from lp3d_analysis.utils import extract_ood_frame_predictions
 
 
 # TODO
 # - before train_and_infer, will be nice to put cfg updates in their own function
+# - remove get_callbacks from lp3d_analysis.train.py 
+# - replace train function with one from LP
+# - faster inference with OOD videos: don't rebuild the model every time
 
 VALID_MODEL_TYPES = [
     'supervised',
     'context',
 ]
+
 
 def pipeline(config_file: str):
 
@@ -67,6 +72,12 @@ def pipeline(config_file: str):
                         data_dir=data_dir,
                         results_dir=results_dir,
                         inference_dirs=cfg_pipe.train_networks.inference_dirs,
+                        overwrite=cfg_pipe.train_networks.overwrite,
+                    )
+                    # Clean up/reorganize OOD data
+                    extract_ood_frame_predictions(
+                        data_dir=data_dir,
+                        results_dir=results_dir,
                         overwrite=cfg_pipe.train_networks.overwrite,
                     )
 

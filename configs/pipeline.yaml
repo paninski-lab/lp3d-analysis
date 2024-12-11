@@ -32,8 +32,8 @@ train_networks:
   # run inference on videos in these directories (independent of training videos)
   inference_dirs:
     # - videos_new
-    # - videos-for-each-labeled-frame
-    - videos_debug
+    - videos-for-each-labeled-frame
+    # - videos_debug
   # training parameters
   # min_steps: 5000
   # max_steps: 5000
