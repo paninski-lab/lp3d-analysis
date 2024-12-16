@@ -4,6 +4,8 @@ import os
 from lp3d_analysis.io import load_cfgs
 from lp3d_analysis.train import train_and_infer
 from lp3d_analysis.utils import extract_ood_frame_predictions
+from lp3d_analysis.post_process import post_process_ensemble
+
 
 
 # TODO
@@ -25,7 +27,7 @@ def pipeline(config_file: str):
     # -------------------------------------------
 
     # load cfg (pipeline yaml) and cfg_lp (lp yaml)
-    cfg_pipe, cfg_lp = load_cfgs(config_file)  # cfg_lp is a DictConfig, cfg is not
+    cfg_pipe, cfg_lp = load_cfgs(config_file)  # cfg_lp is a DictConfig, cfg_pipe is not
     
     # Define + create directories
     data_dir = cfg_lp.data.data_dir
@@ -47,7 +49,7 @@ def pipeline(config_file: str):
                     # specify output directory
                     results_dir = os.path.join(  # @lenny can update this how you see fit
                         outputs_dir, cfg_pipe.intermediate_results_dir, 
-                        f'{model_type}-{n_hand_labels}-{rng_seed}',
+                        f'{model_type}_{n_hand_labels}_{rng_seed}',
                     )
                     # update cfg_lp
                     cfg_lp_copy = cfg_lp.copy()
@@ -74,12 +76,52 @@ def pipeline(config_file: str):
                         inference_dirs=cfg_pipe.train_networks.inference_dirs,
                         overwrite=cfg_pipe.train_networks.overwrite,
                     )
-                    # Clean up/reorganize OOD data
-                    extract_ood_frame_predictions(
-                        data_dir=data_dir,
-                        results_dir=results_dir,
-                        overwrite=cfg_pipe.train_networks.overwrite,
-                    )
+                    if 'videos-for-each-labeled-frame' in cfg_pipe.train_networks.inference_dirs:
+                        # Clean up/reorganize OOD data
+                        extract_ood_frame_predictions(
+                            cfg_lp=cfg_lp_copy.copy(), # the reason is that if I don't do that on rng 0  I will run train and infer on the in distribution data and then I come to this function if I don't do that in that function, I will train on incorrect data because it will change configrations file 
+                            data_dir=data_dir,
+                            results_dir=results_dir,
+                            overwrite=cfg_pipe.train_networks.overwrite,
+                            video_dir='videos-for-each-labeled-frame',
+                        )
+                
+                for mode, mode_config in cfg_pipe.post_processing.items():
+                    if mode_config.run:
+                        print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}")
+                        post_process_ensemble(
+                            cfg_lp=cfg_lp_copy.copy(),
+                            results_dir=results_dir,
+                            model_type=model_type,
+                            n_labels= n_hand_labels,
+                            seed_range=(cfg_pipe.train_networks.ensemble_seeds[0], cfg_pipe.train_networks.ensemble_seeds[-1]),
+                            views= cfg_lp.data.view_names,
+                            mode=mode,
+                            overwrite=cfg_pipe.train_networks.overwrite,
+                        )
+                        
+
+
+                
+                
+                
+                #if config_pipe.post # 2 if statements if want ensemble mean and if want ensemble median - send the overwrite to the function that I will write 
+                # Will make assumptions on the path
+
+                # Here will start looping over the pose processes 
+                # want to check if want to run the particular pose process and have a couple of if statmetns
+                # combine predictions from multiple models in the ensemble if want ensmble_mean run this function and if want eks run this
+                # make a new py file called pose processing and basically want to load predictions from different models, want to take the mean / median of all the x and y and also of likelihood - that will be the ensemble mean and median 
+                # that will all be saved as a data frame in csv file inside the supervised_100_0-1 directory and make another directory for each post processor - ensemble_mean, ensemble_median 
+                # once have that data frame  I can run compute metrics from the new set of predictions and it will do the pixel_error 
+
+# after loop through all the seeds want to run through the post=processes  
+# for this I need to implement ensemble mean and median 
+# take the predictions files in the videos-for-each-labeled-frame and load the csv files from each seed and each view 
+# I want the prediction files from supervised-100-0 and supervised 100-1 
+#. I will have to make a new directory supervised_100_0 and supervised_100_1 and the directory for the ensemble will be supervised_100_0-1 (if had more it is 0-5 for example)
+
+
 
 #     # # # -------------------------------------------------------------------------------------
 #     # # # Post-process network outputs to generate potential pseudo labels (chosen in next step)
