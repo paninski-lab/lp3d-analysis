@@ -13,6 +13,7 @@ from omegaconf import DictConfig
 # 1. need to make a decision about the naming of the output file and how to access the correct model name because it is not part of the results_dir 
 # 2. change names of variables so will look better in the code and make more sense 
 # 3. should I use cfg_lp_copy?
+#4 I need to make sure that I don't make modification to the original config file 
 
 def extract_ood_frame_predictions(
     cfg_lp: DictConfig,
@@ -25,13 +26,17 @@ def extract_ood_frame_predictions(
     #pass
     
     new_csv_files = [f for f in os.listdir(data_dir) if f.endswith('_new.csv')]   
+    print(f"the new csv files are {new_csv_files}")
     # Use cfg_lp instead of cfg_lp_copy
-    print(f" the nwe csv files are {new_csv_files}")
+    
+
+    #cfg_lp.data.csv_file = new_csv_files it was not here but maybe it should be here?
 
     for csv_file in new_csv_files:
         # load each of the new csv files and iterate through the index 
         prediction_name = '_'.join(csv_file.split('_')[1:])
-        preds_file = os.path.join(results_dir, video_dir , f'predictions_{prediction_name}') # here need a better way than writing 'videos-for-each-labeled-frame'
+        preds_file = os.path.join(results_dir, video_dir , f'predictions_{prediction_name}') 
+        print(f"the preds file is {preds_file}")
         
         if os.path.exists(preds_file) and not overwrite:
             print(f'Predictions file {preds_file} already exists. Skipping.')
@@ -73,7 +78,12 @@ def extract_ood_frame_predictions(
             results_df.to_csv(preds_file)
             print(f'Saved predictions to {preds_file}')
 
-            cfg_lp.data.csv_file = new_csv_files 
+            # make sure I don't make any changes to the original cfg_lp
+            cfg_lp.data.csv_file = csv_file
+            print(f"the preds file is {preds_file}")
+            print(f"the cfg_lp is {cfg_lp}")
+            print(f" the csv file is {cfg_lp.data.csv_file}")
+            print(f" the file path is {file_path}")
         
             try:
                 compute_metrics(cfg=cfg_lp, preds_file=preds_file, data_module=None)

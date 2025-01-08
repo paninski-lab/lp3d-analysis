@@ -10,7 +10,7 @@ lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/conf
 # [needed?] pipeline seed for initial data split
 pipeline_seeds: 0
 
-intermediate_results_dir: results_500
+intermediate_results_dir: results_100_5k
 
 # initial training of an ensemble of networks
 train_networks:
@@ -38,15 +38,15 @@ train_networks:
   inference_dirs:
     # - videos_new
     - videos-for-each-labeled-frame
-    # - videos_debug
+    - videos_debug
   # training parameters
   # min_steps: 5000
   # max_steps: 5000
   # milestone_steps: [2000, 3000, 4000]
   # val_check_interval: 50
   # train_check_interval: 10
-  min_steps: 500
-  max_steps: 500
+  min_steps: 5000 # need 5000
+  max_steps: 5000 # need 5000
   milestone_steps: [2000, 3000, 4000]
   val_check_interval: 5
   train_check_interval: 5
@@ -54,7 +54,7 @@ train_networks:
 # post-processing options
 post_processing:
   eks_singleview:
-    run: False
+    run: True
     overwrite: False
   eks_multiview:
     run: False
@@ -72,3 +72,15 @@ visualization:
   run: False
   overwrite: False
   ens_var_plots: False
+  pixel_error_ens_std_plots:
+    run: False 
+    overwrite: False
+  eks_singleview_plots:
+    run: False
+    overwrite: False
+
+  
+# remember that we will have to run it over view 
+
+  
+  

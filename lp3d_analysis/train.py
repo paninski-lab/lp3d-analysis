@@ -12,13 +12,14 @@ import lightning.pytorch as pl
 import numpy as np
 import pandas as pd
 import torch
+from lightning_pose.callbacks import AnnealWeight, UnfreezeBackbone
 from lightning_pose.utils import pretty_print_cfg, pretty_print_str
 from lightning_pose.utils.io import (check_video_paths,
                                      return_absolute_data_paths,
                                      return_absolute_path)
 from lightning_pose.utils.predictions import (predict_dataset,
                                               predict_single_video)
-from lightning_pose.utils.scripts import (  # get_callbacks,
+from lightning_pose.utils.scripts import (  # get_callbacks 
     calculate_train_batches, 
     compute_metrics,
     get_data_module, 
@@ -51,28 +52,25 @@ def get_callbacks(
         )
         callbacks.append(early_stopping)
 
+    if backbone_unfreeze:
+        unfreeze_backbone_callback = UnfreezeBackbone(cfg_lp.training.unfreezing_epoch)
+        callbacks.append(unfreeze_backbone_callback)
+
     if lr_monitor:
         lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval="epoch")
         callbacks.append(lr_monitor)
 
-    if ckpt_model:
-        ckpt_callback = pl.callbacks.model_checkpoint.ModelCheckpoint(
-            monitor="val_supervised_loss",
-            mode="min",
-            save_top_k=1,
-            filename="best-checkpoint-step={step}-val_loss={val_supervised_loss:.2f}",
-            save_last=True,
-        )
-        callbacks.append(ckpt_callback)
+    # always save out best model
+    ckpt_best_callback = pl.callbacks.model_checkpoint.ModelCheckpoint(
+        monitor="val_supervised_loss",
+        mode="min",
+        filename="{epoch}-{step}-best",
+        enable_version_counter=False,
+    )
+    callbacks.append(ckpt_best_callback)
 
-    if backbone_unfreeze:
-        transfer_unfreeze_callback = pl.callbacks.BackboneFinetuning(
-            unfreeze_backbone_at_epoch=cfg_lp.training.unfreezing_epoch,
-            backbone_initial_ratio_lr=0.1,
-            should_align=True,
-            train_bn=True,
-        )
-        callbacks.append(transfer_unfreeze_callback)
+
+    
 
     # we just need this callback for unsupervised models
     if (cfg_lp.model.losses_to_use != []) and (cfg_lp.model.losses_to_use is not None):
@@ -191,6 +189,7 @@ def train(
 
     # get best ckpt
     best_ckpt = os.path.abspath(trainer.checkpoint_callback.best_model_path)
+    print(f"Best checkpoint: {best_ckpt}")
 
     # check if best_ckpt is a file
     if not os.path.isfile(best_ckpt):
@@ -338,6 +337,7 @@ def inference_with_metrics(
 
     # compute predictions if they don't already exist
     if not os.path.exists(preds_file):
+        print(f"Using checkpoint: {ckpt_file}")
         preds_df = predict_single_video(
             video_file=video_file,
             ckpt_file=ckpt_file,
@@ -388,6 +388,10 @@ def train_and_infer(
 
     # Check if model has already been trained
     model_config_checked = os.path.join(results_dir, "config.yaml")
+    # I added them 
+    best_ckpt = None
+    data_module = None
+    trainer = None
 
     if os.path.exists(model_config_checked) and not overwrite:
         print(
@@ -396,15 +400,45 @@ def train_and_infer(
             f'OR change cfg_pipeline.train_networks.intermediate_results_dir.'
         )
 
-        checkpoint_pattern = os.path.join(
-            results_dir, "tb_logs", "*", "version_*", "checkpoints", "best-checkpoint-*.ckpt")
-        checkpoint_files = glob.glob(checkpoint_pattern)
+        # checkpoint_pattern = os.path.join(
+        #     results_dir, "tb_logs", "*", "version_*", "checkpoints", "best-checkpoint-*.ckpt")
+        # checkpoint_files = glob.glob(checkpoint_pattern)
+        # Look for checkpoint files with more flexible pattern matching
+        checkpoint_patterns = [
+            # Lightning default epoch-step pattern
+            os.path.join(results_dir, "tb_logs", "*", "version_*", "checkpoints", "epoch=*-step=*-best.ckpt"),
+            # Original pattern (legacy)
+            os.path.join(results_dir, "tb_logs", "*", "version_*", "checkpoints", "best-checkpoint-*.ckpt"),
+            # Try direct 'test_model' pattern based on your structure
+            os.path.join(results_dir, "tb_logs", "test_model", "version_*", "checkpoints", "epoch=*-step=*-best.ckpt"),
+            # Fallback pattern for any .ckpt file
+            os.path.join(results_dir, "tb_logs", "*", "version_*", "checkpoints", "*.ckpt")
+        ]
 
-        if checkpoint_files:
-            best_ckpt = sorted(checkpoint_files)[-1]  # Get the latest best checkpoint
+        for pattern in checkpoint_patterns:
+            checkpoint_files = glob.glob(pattern)
+            if checkpoint_files:
+                best_ckpt = sorted(checkpoint_files)[-1]  # Get the latest checkpoint
+                print(f"Found checkpoint: {best_ckpt}")
+                break
 
-        data_module = None
-        trainer = None
+        if best_ckpt is None:
+            if overwrite:
+                print("No checkpoints found. Will retrain model since overwrite=True")
+            else:
+                raise FileNotFoundError(
+                    f"No checkpoint files found in {results_dir}/tb_logs/*/version_*/checkpoints/. "
+                    "Either set overwrite=True to retrain the model, or ensure checkpoints exist."
+                )
+
+        
+        # best_ckpt = sorted(checkpoint_files)[-1]  # Get the latest best checkpoint
+        # print(f"Found existing checkpoint: {best_ckpt}")
+        # if checkpoint_files:
+        #     best_ckpt = sorted(checkpoint_files)[-1]  # Get the latest best checkpoint
+
+        # data_module = None
+        # trainer = None
 
     else:
         print(f"No config.yaml found for this model. Training the model.")
@@ -423,10 +457,12 @@ def train_and_infer(
             'directory add it to cfg_pipeline.train_networks.inference_dirs'
         )
         return
+
+    # if best_ckpt is None:
+    #     raise ValueError("No checkpoint file available for inference")
     
     # Run inference on all InD/OOD videos and compute unsupervised metrics
     for video_dir in inference_dirs:
-        
         video_files = [
             f for f in os.listdir(os.path.join(data_dir, video_dir)) if f.endswith('.mp4')
         ]
@@ -440,6 +476,7 @@ def train_and_infer(
                 files_tmp = os.listdir(sub_video_dir_abs)
                 video_files += [f'{sub_video_dir}/{f}' for f in files_tmp if f.endswith('.mp4')]
         
+        print(f"Found {len(video_files)} videos in {video_dir}")
         for video_file in video_files:
             if csv_prefix:
                 raise NotImplementedError

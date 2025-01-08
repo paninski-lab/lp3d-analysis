@@ -76,6 +76,7 @@ def pipeline(config_file: str):
                         inference_dirs=cfg_pipe.train_networks.inference_dirs,
                         overwrite=cfg_pipe.train_networks.overwrite,
                     )
+
                     if 'videos-for-each-labeled-frame' in cfg_pipe.train_networks.inference_dirs:
                         # Clean up/reorganize OOD data
                         extract_ood_frame_predictions(
@@ -87,8 +88,8 @@ def pipeline(config_file: str):
                         )
                 
                 for mode, mode_config in cfg_pipe.post_processing.items():
-                    if mode_config.run:
-                        print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}")
+                    if mode_config.run: # if the mode is mean or median or eks_singleview 
+                        #print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}"
                         post_process_ensemble(
                             cfg_lp=cfg_lp_copy.copy(),
                             results_dir=results_dir,
@@ -97,9 +98,15 @@ def pipeline(config_file: str):
                             seed_range=(cfg_pipe.train_networks.ensemble_seeds[0], cfg_pipe.train_networks.ensemble_seeds[-1]),
                             views= cfg_lp.data.view_names,
                             mode=mode,
+                            inference_dirs=cfg_pipe.train_networks.inference_dirs,
                             overwrite=cfg_pipe.train_networks.overwrite,
                         )
-                        
+                    
+
+                        # elif mode_config == 'eks_singleview':
+                        #     print("Lenny u .. continue and import the function from pose_process.py ")
+                        # elif mode_config == 'eks_multiview':
+                        #     print("Lenny be smart please although you don't think about that now -- not your job (: ")
 
 
                 
