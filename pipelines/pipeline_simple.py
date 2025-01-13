@@ -122,8 +122,7 @@ def pipeline(config_file: str):
                 # that will all be saved as a data frame in csv file inside the supervised_100_0-1 directory and make another directory for each post processor - ensemble_mean, ensemble_median 
                 # once have that data frame  I can run compute metrics from the new set of predictions and it will do the pixel_error 
 
-# after loop through all the seeds want to run through the post=processes  
-# for this I need to implement ensemble mean and median 
+
 # take the predictions files in the videos-for-each-labeled-frame and load the csv files from each seed and each view 
 # I want the prediction files from supervised-100-0 and supervised 100-1 
 #. I will have to make a new directory supervised_100_0 and supervised_100_1 and the directory for the ensemble will be supervised_100_0-1 (if had more it is 0-5 for example)

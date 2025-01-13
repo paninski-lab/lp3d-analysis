@@ -463,6 +463,7 @@ def train_and_infer(
     
     # Run inference on all InD/OOD videos and compute unsupervised metrics
     for video_dir in inference_dirs:
+        print(f"Running inference on videos in {video_dir}")
         video_files = [
             f for f in os.listdir(os.path.join(data_dir, video_dir)) if f.endswith('.mp4')
         ]
@@ -471,9 +472,20 @@ def train_and_infer(
             # assume we have a nested directory: directories full of mp4 files
             video_files = []
             sub_video_dirs = os.listdir(os.path.join(data_dir, video_dir))
+            print(f"Found {len(sub_video_dirs)} subdirectories in {video_dir}")
+            print("the subdirectories are:" + str(sub_video_dirs)) 
+
+            # Filter out files (e.g., .DS_Store) from the list of subdirectories
+            sub_video_dirs = [
+                sub_video_dir for sub_video_dir in sub_video_dirs
+                if os.path.isdir(os.path.join(data_dir, video_dir, sub_video_dir))
+            ] # I added this because it solved me a problem 
+
             for sub_video_dir in sub_video_dirs:
                 sub_video_dir_abs = os.path.join(data_dir, video_dir, sub_video_dir)
+                print(f"Checking {sub_video_dir}")
                 files_tmp = os.listdir(sub_video_dir_abs)
+                print(f"Found {len(files_tmp)} files in {sub_video_dir}")
                 video_files += [f'{sub_video_dir}/{f}' for f in files_tmp if f.endswith('.mp4')]
         
         print(f"Found {len(video_files)} videos in {video_dir}")
@@ -499,3 +511,14 @@ def train_and_infer(
                     trainer=trainer,
                     metrics=False,
                 )
+
+
+
+
+
+
+
+
+
+
+

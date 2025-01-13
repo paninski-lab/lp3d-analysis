@@ -15,3 +15,21 @@ def load_cfgs(config_file: str):
 
     cfg_lp = DictConfig(lightning_pose_cfg)
     return cfg_pipe, cfg_lp
+
+def load_lightning_pose_cfg(config_path: str):
+    """
+    Load the lightning pose configuration file.
+
+    Args:
+        config_path (str): Path to the lightning pose config file.
+
+    Returns:
+        DictConfig: The loaded lightning pose configuration as a DictConfig object.
+    """
+    with open(config_path, "r") as file:
+        lightning_pose_cfg = yaml.safe_load(file)
+
+    return DictConfig(lightning_pose_cfg)
+
+
+

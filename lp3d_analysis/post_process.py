@@ -15,13 +15,37 @@ from lightning_pose.utils.scripts import (
 from  eks.singlecam_smoother import ensemble_kalman_smoother_singlecam
 
 #TODO
-#1. in the variables for the function pose_process_ensemble, try to change the issue with the mode variable so we can add the eks mode and things like that 
-#2. Change the way we are using the cfp_lp.data.csv_file - it will make more sense in the function 
-#3 change variables names so it will make more sense 
-# 4 after I work on the plotting We are going to do the EKS  
-#5. look at format_data in eks 
+# 1. Implement post_process_ensemble_multiview
 
-
+def process_predictions(pred_file: str, column_structure=None):
+    """
+    Process predictions from a CSV file and return relevant data structures.
+    
+    Args:
+        pred_file (str): Path to the prediction CSV file
+        column_structure: Existing column structure (if any)
+        
+    Returns:
+        tuple: (column_structure, array_data, numeric_cols, keypoint_names, df_index)
+               Returns (None, None, None, None, None) if file doesn't exist
+    """
+    keypoint_names = []  # Initialize keypoint_names 
+    
+    if not os.path.exists(pred_file):
+        print(f"Warning: Could not find predictions file: {pred_file}")
+        return None, None, None, None, None
+        
+    df = pd.read_csv(pred_file, header=[0, 1, 2], index_col=0)
+    
+    if column_structure is None:
+        column_structure = df.loc[:, df.columns.get_level_values(2).isin(['x', 'y', 'likelihood'])].columns
+        keypoint_names = list(dict.fromkeys(column_structure.get_level_values(1)))
+        print(f'Keypoint names are {keypoint_names}')
+    
+    numeric_cols = df.loc[:, column_structure]
+    array_data = numeric_cols.to_numpy()
+    
+    return column_structure, array_data, numeric_cols, keypoint_names, df.index
 
 def post_process_ensemble(
     cfg_lp: DictConfig,
@@ -34,22 +58,50 @@ def post_process_ensemble(
     inference_dirs: List[str],
     overwrite: bool,
 ) -> None:
+    """
+    Post-processes ensemble predictions from multiple model seeds by aggregating their outputs.
+    
+    Args:
+        cfg_lp (DictConfig): Configuration dictionary containing data and processing parameters
+        results_dir (str): Base directory containing the model results
+        model_type (str): Type of model used for predictions
+        n_labels (int): Number of labels/keypoints in the model
+        seed_range (tuple[int, int]): Range of seeds (start, end) to include in ensemble
+        views (list[str]): List of camera views to process
+        mode (Literal['ensemble_mean', 'ensemble_median', 'eks_singleview']): Aggregation method:
+            - ensemble_mean: Takes mean across all seed predictions
+            - ensemble_median: Takes median across all seed predictions
+            - eks_singleview: Applies Extended Kalman Smoothing to single view predictions
+        inference_dirs (List[str]): List of inference directory names to process
+        overwrite (bool): Whether to overwrite existing processed files
+    
+    Returns:
+        None: Results are saved to disk in the specified output directory
+        
+    The function:
+    1. Creates an ensemble directory structure based on model type and seeds
+    2. For each inference directory and view:
+        - Loads predictions from all seed models
+        - Stacks predictions into a single array
+        - Applies the specified aggregation method (mean/median/eks)
+        - Saves processed results to CSV
+        - Computes metrics on the aggregated predictions
+    """
 
-    for inference_dir in inference_dirs:
-        print(f"Running post-processing for inference directory: {inference_dir}")
-        base_dir = os.path.dirname(results_dir)
-        print(f"The results directory is {base_dir}")
-        ensemble_dir = os.path.join(
-            base_dir,
-            f"{model_type}_{n_labels}_{seed_range[0]}-{seed_range[1]}"
-        )
-        output_dir = os.path.join(ensemble_dir, mode, inference_dir)
-        os.makedirs(output_dir, exist_ok=True)
-
-        seed_dirs = [
+    # setup directories 
+    base_dir = os.path.dirname(results_dir)
+    ensemble_dir = os.path.join(
+        base_dir,
+        f"{model_type}_{n_labels}_{seed_range[0]}-{seed_range[1]}"
+    )
+    seed_dirs = [
             os.path.join(base_dir, f"{model_type}_{n_labels}_{seed}")
             for seed in range(seed_range[0], seed_range[1] + 1)
-        ]
+    ]
+
+    for inference_dir in inference_dirs:
+        output_dir = os.path.join(ensemble_dir, mode, inference_dir)
+        os.makedirs(output_dir, exist_ok=True)
         
         print(f"Post-processing ensemble predictions for {model_type} {n_labels} {seed_range[0]}-{seed_range[1]} for {inference_dirs} " )
 
@@ -60,7 +112,6 @@ def post_process_ensemble(
                 stacked_arrays = []
                 stacked_dfs = []
                 column_structure = None
-                #base_keypoints = []
                 keypoint_names = []
                 
                 for seed_dir in seed_dirs:
@@ -69,34 +120,11 @@ def post_process_ensemble(
                         inference_dir,
                         f'predictions_{view}_new.csv'
                     )
-                    if os.path.exists(pred_file):
-                        df = pd.read_csv(pred_file, header=[0, 1, 2], index_col=0)
-                        if column_structure is None:
-                            column_structure = df.loc[:, df.columns.get_level_values(2).isin(['x', 'y', 'likelihood'])].columns
-                            #Extract keypoint names in the original order from the second level of the MultiIndex
-                            keypoint_names = list(dict.fromkeys(column_structure.get_level_values(1)))
-                            #keypoint_names = list(column_structure.get_level_values(1)) # keep all repetitions 
-                            # base_keypoints = list(dict.fromkeys(column_structure.get_level_values(1)))
-                            # print(f' basekeypoint names are {base_keypoints}')
-                            
-                            print(f'Keypoint names are {keypoint_names}')
-
-                        # Select only numeric columns (x, y, likelihood)
-                        numeric_cols = df.loc[:, column_structure]
-
-                        # Convert DataFrame to a 2D array (numeric values only)
-                        stacked_arrays.append(numeric_cols.to_numpy())
-                        # create stacked_dfs for eks_singleview --> this will be the markers list 
-                        stacked_dfs.append(numeric_cols) # this will be markers list 
-                        print(f'the shape of the stacked arrays is {np.shape(stacked_arrays)}')
-                        print(f'the shape of the stacked dfs is {stacked_dfs[0].shape}')
-
-                    else:
-                        print(f"Warning: Could not find predictions file: {pred_file}")
-
-                if not stacked_arrays or column_structure is None:
-                    print(f"Could not find predictions for view: {view}")
-                    continue
+                    column_structure, array_data, numeric_cols, keypoints, df_index = process_predictions(pred_file, column_structure)
+                    if array_data is not None:
+                        stacked_arrays.append(array_data)
+                        stacked_dfs.append(numeric_cols)
+                        keypoint_names = keypoints if keypoints else keypoint_names
 
                 # Stack all arrays along the third dimension
                 stacked_arrays = np.stack(stacked_arrays, axis=-1)
@@ -107,7 +135,22 @@ def post_process_ensemble(
                 elif mode == 'ensemble_median':
                     aggregated_array = np.nanmedian(stacked_arrays, axis=-1)
                 elif mode == 'eks_singleview':
-                    aggregated_array = run_eks_singleview(markers_list= stacked_dfs, keypoint_names=keypoint_names) # need to implement this function 
+                    aggregated_array, smoothed_df = run_eks_singleview(
+                        markers_list= stacked_dfs,
+                        keypoint_names=keypoint_names
+                    )
+                    # filtered_df = smoothed_df.loc[
+                    #     : , smoothed_df.columns.get_level_values(2).isin(['x','y','likelihood'])
+                    # ]
+                    # # Update the aggregated_array to match the filtered columns
+                    # aggregated_array = filtered_df.to_numpy()
+                    # Dynamically update column structure based on smoothed_df
+                    column_structure = smoothed_df.columns[
+                        smoothed_df.columns.get_level_values(2).isin(
+                            ['x', 'y', 'likelihood', 'x_ens_median', 'y_ens_median','x_ens_var', 'y_ens_var', 'x_posterior_var', 'y_posterior_var']
+                        )
+                    ]          
+
                 else:
                     print(f"Invalid mode: {mode}")
                     continue
@@ -115,7 +158,7 @@ def post_process_ensemble(
                 # Create a new DataFrame with the aggregated data
                 result_df = pd.DataFrame(
                     data=aggregated_array,
-                    index=df.index,
+                    index= df_index, #df.index,
                     columns=column_structure
                 )
 
@@ -128,10 +171,9 @@ def post_process_ensemble(
 
                 # Update cfg_lp for each view specifically
                 cfg_lp_view = cfg_lp.copy()
-                if view == 'bot':
-                    cfg_lp_view.data.csv_file = ['CollectedData_bot_new.csv']
-                elif view == 'top':
-                    cfg_lp_view.data.csv_file = ['CollectedData_top_new.csv']
+                # Dynamically create the CSV filename based on view
+                csv_filename = f'CollectedData_{view}_new.csv'
+                cfg_lp_view.data.csv_file = [csv_filename]
                 cfg_lp_view.data.view_names = [view]
 
                 try:
@@ -141,41 +183,36 @@ def post_process_ensemble(
                     print(f"Error computing metrics\n{e}")
 
         else:
-            #new_predictions_files = [] # check if I need that
             for view in views: 
                 stacked_arrays = []
                 stacked_dfs = []
                 column_structure = None
-                base_keypoints = []
                 keypoint_names = []
 
                 for seed_dir in seed_dirs:
-                    pred_file = os.path.join(
-                        seed_dir,
-                        inference_dir,
-                        f'180607_004_{view}.csv' # I will have to modify this to be more general
-                    )
-                    if os.path.exists(pred_file):
-                        df = pd.read_csv(pred_file, header=[0, 1, 2], index_col=0)
-                        if column_structure is None:
-                            column_structure = df.loc[:, df.columns.get_level_values(2).isin(['x', 'y', 'likelihood'])].columns
-                            #Extract keypoint names in the original order from the second level of the MultiIndex
-                            keypoint_names = list(dict.fromkeys(column_structure.get_level_values(1)))
-                            print(f'Keypoint names are {keypoint_names}')
-                        # Select only numeric columns (x, y, likelihood)
-                        numeric_cols = df.loc[:, column_structure]
-                        # Convert DataFrame to a 2D array (numeric values only)
-                        stacked_arrays.append(numeric_cols.to_numpy())
-                        # create stacked_dfs for eks_singleview --> this will be the markers list 
-                        stacked_dfs.append(numeric_cols) # this will be markers list 
-                        print(f'the shape of the stacked arrays is {np.shape(stacked_arrays)}')
-                        print(f'the shape of the stacked dfs is {stacked_dfs[0].shape}')
-                    else:
-                        print(f"Warning: Could not find predictions file: {pred_file}")
-                
-                if not stacked_arrays or column_structure is None:
-                    print(f"Could not find predictions for view: {view}")
-                    continue            
+                    base_files = os.listdir(os.path.join(seed_dir, inference_dir))
+                    print(f"base_files: {base_files}")
+                    # Check if any files match the `view`
+                    #csv_files = [f for f in base_files if f.endswith(f'{view}.csv')] # this can be dependent on a dataset or something like that... 
+                    # we need to think about it 
+                    # Check if any files include `{view}-` in a case-sensitive manner
+                    csv_files = [f for f in base_files if f.endswith('.csv') and f"{view}_" in f] 
+                    print(f"csv_files: {csv_files}")
+                    print("the length of csv_files is ", len(csv_files))
+
+                    # Handle the case where no matching files are found
+                    if not csv_files:
+                        print(f"No matching files found for view: {view} in {seed_dir}")
+                        continue
+
+                    pred_file = os.path.join(seed_dir, inference_dir, csv_files[0])
+
+                    column_structure, array_data, numeric_cols, keypoints, df_index = process_predictions(pred_file, column_structure)
+                    if array_data is not None:
+                        stacked_arrays.append(array_data)
+                        stacked_dfs.append(numeric_cols)
+                        keypoint_names = keypoints if keypoints else keypoint_names
+                     
                 # Stack all arrays along the third dimension
                 stacked_arrays = np.stack(stacked_arrays, axis=-1)
 
@@ -185,139 +222,34 @@ def post_process_ensemble(
                 elif mode == 'ensemble_median':
                     aggregated_array = np.nanmedian(stacked_arrays, axis=-1)
                 elif mode == 'eks_singleview':
-                    aggregated_array = run_eks_singleview(markers_list= stacked_dfs, keypoint_names=keypoint_names) # need to implement this function 
+                    aggregated_array, smoothed_df = run_eks_singleview(
+                        markers_list= stacked_dfs,
+                        keypoint_names=keypoint_names
+                    )
+                    # Dynamically update column structure based on smoothed_df
+                    column_structure = smoothed_df.columns[
+                        smoothed_df.columns.get_level_values(2).isin(
+                            ['x', 'y', 'likelihood', 'x_ens_median', 'y_ens_median','x_ens_var', 'y_ens_var', 'x_posterior_var', 'y_posterior_var']
+                        )
+                    ]             
+
                 else:
-                    print(f"Invalid mode: {mode}")
+                    print(f"Invalid mode: {mode}. Skipping this view")
                     continue
 
                 # Create a new DataFrame with the aggregated data
                 result_df = pd.DataFrame(
                     data=aggregated_array,
-                    index=df.index,
+                    index= stacked_dfs[0].index, #df.index,
                     columns=column_structure
                 )
-
-                #result_df.loc[:,("set", "", "")] = "train"
-
-                preds_file = os.path.join(output_dir, f'180607_004_{view}.csv')
+                # Use the same base filename pattern that was found in the input directory
+                base_name = os.path.basename(pred_file)
+                preds_file = os.path.join(output_dir, base_name)
+                # preds_file = os.path.join(output_dir, f'180607_004_{view}.csv')
                 result_df.to_csv(preds_file)
-                #new_predictions_files.append(preds_file)
                 print(f"Saved ensemble {mode} predictions for {view} view to {preds_file}")
-
-                print((f" I don't need to update the cfg_lp for each view specifically for the inference directory: {inference_dir}"))
-                print((f" I don't need to compute metrics for the inference directory: {inference_dir}"))
-
-
-
-
-
-    # base_dir = os.path.dirname(results_dir)
-    # ensemble_dir = os.path.join(
-    #     base_dir,
-    #     f"{model_type}_{n_labels}_{seed_range[0]}-{seed_range[1]}"
-    # )
-    # output_dir = os.path.join(ensemble_dir, mode)
-    # os.makedirs(output_dir, exist_ok=True)
-
-    # seed_dirs = [
-    #     os.path.join(base_dir, f"{model_type}_{n_labels}_{seed}")
-    #     for seed in range(seed_range[0], seed_range[1] + 1)
-    # ]
-    
-    # print(f"Post-processing ensemble predictions for {model_type} {n_labels} {seed_range[0]}-{seed_range[1]} for {inference_dirs} " )
-
-    
-
-
-    # #new_predictions_files = []
-
-    # #print(f"Post-processing ensemble predictions for {model_type} {n_labels} {seed_range[0]}-{seed_range[1]}")
-
-
-    # for view in views: 
-    #     stacked_arrays = []
-    #     stacked_dfs = []
-    #     column_structure = None
-    #     base_keypoints = []
-    #     keypoint_names = []
-        
-    #     for seed_dir in seed_dirs:
-    #         pred_file = os.path.join(
-    #             seed_dir,
-    #             'videos-for-each-labeled-frame',
-    #             f'predictions_{view}_new.csv'
-    #         )
-    #         if os.path.exists(pred_file):
-    #             df = pd.read_csv(pred_file, header=[0, 1, 2], index_col=0)
-    #             if column_structure is None:
-    #                 column_structure = df.loc[:, df.columns.get_level_values(2).isin(['x', 'y', 'likelihood'])].columns
-    #                 #Extract keypoint names in the original order from the second level of the MultiIndex
-    #                 keypoint_names = list(dict.fromkeys(column_structure.get_level_values(1)))
-    #                 #keypoint_names = list(column_structure.get_level_values(1)) # keep all repetitions 
-    #                 # base_keypoints = list(dict.fromkeys(column_structure.get_level_values(1)))
-    #                 # print(f' basekeypoint names are {base_keypoints}')
-                    
-    #                 print(f'Keypoint names are {keypoint_names}')
-
-    #             # Select only numeric columns (x, y, likelihood)
-    #             numeric_cols = df.loc[:, column_structure]
-
-    #             # Convert DataFrame to a 2D array (numeric values only)
-    #             stacked_arrays.append(numeric_cols.to_numpy())
-    #             # create stacked_dfs for eks_singleview --> this will be the markers list 
-    #             stacked_dfs.append(numeric_cols) # this will be markers list 
-    #             print(f'the shape of the stacked arrays is {np.shape(stacked_arrays)}')
-    #             print(f'the shape of the stacked dfs is {stacked_dfs[0].shape}')
-
-    #         else:
-    #             print(f"Warning: Could not find predictions file: {pred_file}")
-
-    #     if not stacked_arrays or column_structure is None:
-    #         print(f"Could not find predictions for view: {view}")
-    #         continue
-
-    #     # Stack all arrays along the third dimension
-    #     stacked_arrays = np.stack(stacked_arrays, axis=-1)
-
-    #     # Compute the mean/median along the third dimension
-    #     if mode == 'ensemble_mean':
-    #         aggregated_array = np.nanmean(stacked_arrays, axis=-1)
-    #     elif mode == 'ensemble_median':
-    #         aggregated_array = np.nanmedian(stacked_arrays, axis=-1)
-    #     elif mode == 'eks_singleview':
-    #          aggregated_array = run_eks_singleview(markers_list= stacked_dfs, keypoint_names=keypoint_names) # need to implement this function 
-    #     else:
-    #         print(f"Invalid mode: {mode}")
-    #         continue
-
-    #     # Create a new DataFrame with the aggregated data
-    #     result_df = pd.DataFrame(
-    #         data=aggregated_array,
-    #         index=df.index,
-    #         columns=column_structure
-    #     )
-
-    #     result_df.loc[:,("set", "", "")] = "train"
-
-    #     preds_file = os.path.join(output_dir, f'predictions_{view}_new.csv')
-    #     result_df.to_csv(preds_file)
-    #     new_predictions_files.append(preds_file)
-    #     print(f"Saved ensemble {mode} predictions for {view} view to {preds_file}")
-
-    #     # Update cfg_lp for each view specifically
-    #     cfg_lp_view = cfg_lp.copy()
-    #     if view == 'bot':
-    #         cfg_lp_view.data.csv_file = ['CollectedData_bot_new.csv']
-    #     elif view == 'top':
-    #         cfg_lp_view.data.csv_file = ['CollectedData_top_new.csv']
-    #     cfg_lp_view.data.view_names = [view]
-
-    #     try:
-    #         compute_metrics(cfg=cfg_lp_view, preds_file=preds_file, data_module=None)
-    #         print(f"Successfully computed metrics for {preds_file}")
-    #     except Exception as e:
-    #         print(f"Error computing metrics\n{e}")
-
+                
 
 
 def run_eks_singleview(
@@ -326,7 +258,7 @@ def run_eks_singleview(
     blocks : list = [], # will need to take care of that 
     avg_mode: str = 'median',
     var_mode : str = 'confidence_weighted_var',
-) -> np.ndarray:
+) -> tuple[np.ndarray, pd.DataFrame]: # it was only np.ndarray
 
     """
     Process single view data using Ensemble Kalman Smoother.
@@ -364,10 +296,10 @@ def run_eks_singleview(
         var_mode=var_mode,
     )
 
-    # Select only the essential columns (x, y, likelihood) for each keypoint
-    result = df_smoothed.loc[:, df_smoothed.columns.get_level_values(2).isin(['x', 'y', 'likelihood'])].to_numpy()
+    #result = df_smoothed.loc[:, df_smoothed.columns.get_level_values(2).isin(['x', 'y', 'likelihood'])].to_numpy()
+    result = df_smoothed.loc[:, df_smoothed.columns.get_level_values(2).isin(['x', 'y', 'likelihood', 'x_ens_median', 'y_ens_median','x_ens_var', 'y_ens_var', 'x_posterior_var', 'y_posterior_var'])].to_numpy()
     
-    return result
+    return result, df_smoothed
 
 
 # def post_process_ensemble_multiview(

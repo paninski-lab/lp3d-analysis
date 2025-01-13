@@ -37,6 +37,11 @@ data:
   mirrored_column_matches: [0, 1, 2, 3, 4, 5, 6]
   columns_for_singleview_pca: [0, 1, 2, 3, 4, 5, 6]
 
+  skeleton:
+    - ['paw1LH', 'paw2LF']
+    - ['paw3RF', 'paw4RH']
+    
+
 training:
   # select from one of several predefined image/video augmentation pipelines
   # default- resizing only

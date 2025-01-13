@@ -107,5 +107,3 @@ def extract_ood_frame_predictions(
     # save out predictions_<cam_name>.csv
     # compute pixel
 
-
-# Next step - do one of the post processes and the ensemble mean 
