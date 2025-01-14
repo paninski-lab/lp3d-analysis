@@ -53,16 +53,16 @@ train_networks:
 post_processing:
   eks_singleview:
     run: True
-    overwrite: False
+    overwrite: True
   eks_multiview:
-    run: False
-    overwrite: False
+    run: True
+    overwrite: True
   ensemble_mean:
     run: True
-    overwrite: False
+    overwrite: True
   ensemble_median:
     run: True
-    overwrite: False
+    overwrite: True
     
 
 # visualization options
