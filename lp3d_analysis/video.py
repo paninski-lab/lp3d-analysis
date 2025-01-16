@@ -266,9 +266,12 @@ def make_video_snippet(
     preds_file: Optional[str | list] = None,
     clip_length: int = 30,
     likelihood_thresh: float = 0.9,
+    idx_min: int = 0,
+    idx_max: Optional[int] = None,
+    cam_idxs: Optional[list] = None,
     save_dir: Optional[str] = None,
 ) -> tuple:
-    """Create a snippet from a larger video that contains the most movement.
+    """Create a snippet from a larger video(s) that contains the most movement.
 
     Parameters
     ----------
@@ -278,6 +281,10 @@ def make_video_snippet(
     clip_length: length of the snippet in seconds
     likelihood_thresh: only measure movement using the preds_file for keypoints with a likelihood
         above this threshold (0-1)
+    idx_min: minimum frame number to consider from original video
+    idx_max: maximum frame number to consider from original video
+    cam_idxs: subset of cameras to use for computing motion energy; snippets will be created for
+        all cameras
     save_dir: output directory
 
     Returns
@@ -320,7 +327,6 @@ def make_video_snippet(
     dsts = []
     for v, video_file in enumerate(video_files):
 
-        print(f'processing video {v+1}/{len(video_files)}')
         src = video_file
         new_video_name = os.path.basename(video_file).replace(
             ".mp4", ".short.mp4"
@@ -331,6 +337,11 @@ def make_video_snippet(
         srcs.append(src)
         dsts.append(dst)
 
+        if cam_idxs is not None and v not in cam_idxs:
+            continue
+
+        print(f'processing video {v+1}/{len(video_files)}')
+
         # make a `clip_length` second video clip that contains the highest keypoint motion energy
         if win_len >= n_frames:
             # short video, no need to shorten further. just copy existing video
@@ -340,23 +351,26 @@ def make_video_snippet(
             # compute motion energy
             if preds_files is None:
                 # motion energy averaged over pixels
-                me_ = compute_video_motion_energy(video_file=video_file)
+                me_ = compute_video_motion_energy(
+                    video_file=video_file, idx_min=idx_min, idx_max=idx_max,
+                )
             else:
                 # load pose predictions
                 df = pd.read_csv(preds_files[v], header=[0, 1, 2], index_col=0)
                 # motion energy averaged over predicted keypoints
                 me_ = compute_motion_energy_from_predection_df(df, likelihood_thresh)
-            me.append(me_[:, None])
+            me.append(me_[idx_min:, None])
 
     clip_start_idx = 0
     clip_start_sec = 0.0
 
     if len(me) > 0:
         # find window
-        df_me = pd.DataFrame({"me": np.stack(me, axis=1).sum(axis=1)})
+        df_me = pd.DataFrame({"me": np.hstack(me).sum(axis=1)})
         df_me_win = df_me.rolling(window=win_len, center=False).mean()
         # rolling places results in right edge of window, need to subtract this
-        clip_start_idx = df_me_win.me.argmax() - win_len
+        # also need to add back in minimum index
+        clip_start_idx = df_me_win.me.argmax() - win_len + idx_min
         # convert to seconds
         clip_start_sec = int(clip_start_idx / fps)
         # if all predictions are bad, make sure we still create a valid snippet video
@@ -375,12 +389,21 @@ def make_video_snippet(
 def compute_video_motion_energy(
     video_file: str,
     resize_dims: int = 32,
+    idx_min: int = 0,
+    idx_max: Optional[int] = None,
 ) -> np.ndarray:
-    # read all frames, reshape, chop off unwanted portions of beginning/end
+    # read frames, reshape
     cap = cv2.VideoCapture(video_file)
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if idx_max is None:
+        idxs = np.arange(idx_min, total_frames)
+    else:
+        idxs = np.arange(idx_min, min(idx_max, total_frames))
+
     frames = get_frames_from_idxs(
         cap=cap,
-        idxs=np.arange(0, int(cap.get(cv2.CAP_PROP_FRAME_COUNT))),
+        idxs=idxs,
         resize=(resize_dims, resize_dims),
     )
     cap.release()
@@ -415,3 +438,70 @@ def compute_motion_energy_from_predection_df(
     me = np.nanmean(np.linalg.norm(kps[1:] - kps[:-1], axis=2), axis=-1)
     me = np.concatenate([[0], me])
     return me
+
+
+def create_video_grid(
+    video_files: list,
+    save_file: str,
+    grid_layout: tuple,
+    scale_width: int = 256,
+    scale_height: int = 256,
+) -> None:
+    """Combine multiple videos into a grid layout.
+
+    Args:
+        video_files (list): list of input video file paths.
+        save_file (str): path for the output video file.
+        grid_layout (tuple): tuple (rows, cols) specifying the grid layout.
+        scale_width (int): width to scale each video.
+        scale_height (int): height to scale each video.
+
+    """
+    num_videos = len(video_files)
+    rows, cols = grid_layout
+
+    if num_videos > rows * cols:
+        raise ValueError(f"Grid layout ({rows}x{cols}) cannot fit {num_videos} videos.")
+
+    os.makedirs(os.path.dirname(save_file), exist_ok=True)
+
+    # build the input arguments for ffmpeg
+    input_args = []
+    for path in video_files:
+        input_args.extend(["-i", path])
+
+    # scale and label each video
+    filter_parts = []
+    for i in range(num_videos):
+        filter_parts.append(f"[{i}:v]scale={scale_width}:{scale_height}[v{i}]")
+
+    # create xstack layout
+    layout_parts = []
+    for r in range(rows):
+        for c in range(cols):
+            idx = r * cols + c
+            if idx < num_videos:
+                layout_parts.append(f"{c * scale_width}_{r * scale_height}")
+
+    layout = "|".join(layout_parts)
+    filter_complex = "; ".join(
+        filter_parts) + f"; {' '.join(f'[v{i}]' for i in range(num_videos))}xstack=inputs={num_videos}:layout={layout}[vout]"
+
+    # build ffmpeg command
+    cmd = [
+        "ffmpeg",
+        *input_args,
+        "-filter_complex", filter_complex,
+        "-map", "[vout]",
+        "-c:v", "libx264",  # Use H.264 codec
+        "-crf", "23",  # Adjust quality (lower is better quality)
+        "-preset", "fast",  # Encoding speed
+        save_file
+    ]
+
+    # run the command
+    try:
+        subprocess.run(cmd, check=True)
+        print(f"Video successfully created at {save_file}")
+    except subprocess.CalledProcessError as e:
+        print(f"Error occurred: {e}")
