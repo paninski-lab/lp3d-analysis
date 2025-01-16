@@ -1,3 +1,46 @@
+"""Initial script for preprocessing the chickadee dataset.
+
+The raw chickadee dataset was labeled in Label3D, which saves the 3D labels, camera parameters, and
+frames. It does not, however, record the frame index for each labeled frame. Therefore, much of the
+preprocessing work for this dataset involves scanning through the raw videos to find the matching
+labeled frame.
+
+There are several main parts of this script:
+1. match labeled frames to video index
+   (flag: overwrite_idxs)
+2. verify this step by plotting the original frame, best matching frame, and their difference. The
+   results will be stored in the raw data directory.
+   (flag: plot_frames)
+3. once the matching indices are verified, save out the matching frame and context frames. This
+   step is quite time intensive because seeking in the avi files with opencv is not precise enough,
+   so the imageio library is used. There is a lot of overhead to this operation, but it works.
+   The frames will be saved in labeled-data
+   Note 1: any frames where a match was not found is recorded in `bad_idxs`; these will be skipped
+   when exporting frames.
+   Note 2: some videos begin without a bird in the arena, and so I add some of these frames to the
+   labeled dataset. These will be redundant for the full frames, but I take crops in different
+   locations for the cropped dataset. This information is found in `add_blank_frames`
+   (flag: save_frames_full)
+4. verify this step by saving labeled frames in labeled-data-check to manually inspect
+   (flag: save_frames_full_labeled)
+5. export cropped labeled frames and their context; note the same bounding box is used for all
+   frames in a given context window.
+   (flag: save_frames_cropped)
+6. verify this step by saving cropped labeled frames in labeled-data-cropped-check
+   (flag: save_frames_cropped_labeled)
+
+After running this script there is still some manual curation that must take place.
+
+For the uncropped frames:
+1. split data into InD and OOD (scripts/preprocess/split_data.py)
+2. create video snippets for each OOD frame (scripts/preprocess/video_snippets_eks.py)
+3. create unlabeled videos for unsupervised losses (scripts/preprocess/video_snippets_unlabeled.py)
+
+For the cropped frames, the InD/OOD split can be performed as above.
+For the video snippets, it is best to train a detector model on the uncropped frames and then use
+that model to create cropped videos.
+
+"""
 from pathlib import Path
 import os
 
@@ -16,6 +59,16 @@ data_dir = '/media/mattw/multiview-data/_raw/chickadee/Label3D format frames'
 video_dir = '/media/mattw/multiview-data/_raw/chickadee/Videos'
 check_dir = '/media/mattw/multiview-data/_raw/chickadee/frame-matches'
 data_dir_proc = '/media/mattw/multiview-data/chickadee'
+
+# set flags
+overwrite_idxs = False  # find indices of labeled frames; processing takes hours/video!
+plot_matches = False  # quality control
+
+save_frames_full = False            # save out full matched frames and context
+save_frames_full_labeled = False    # quality control
+
+save_frames_cropped = True          # save out cropped matched frames and context
+save_frames_cropped_labeled = True  # quality control
 
 # NOTES:
 # - SLV151_200730_131948_Manual_relabel: need to rerun cropped frame sections with context=0 since there are
@@ -96,20 +149,10 @@ data_info = dataset_info['chickadee']
 w3d = data_info['w3d']
 crop_size = data_info['crop_size']
 cam_names = data_info['cam_names']
-video_names = [c + ".avi" for c in cam_names]
+video_names = [c + '.avi' for c in cam_names]
 keypoints = data_info['keypoints']
 skeleton = data_info['skeleton']
 skeleton_colors = data_info['skeleton_colors']
-
-# set flags
-overwrite_idxs = False  # find indices of labeled frames; processing takes hours/video!
-plot_matches = False  # quality control
-
-save_frames_full = False            # save out full matched frames and context
-save_frames_full_labeled = False    # quality control
-
-save_frames_cropped = True          # save out cropped matched frames and context
-save_frames_cropped_labeled = True  # quality control
 
 videos = os.listdir(video_dir)
 

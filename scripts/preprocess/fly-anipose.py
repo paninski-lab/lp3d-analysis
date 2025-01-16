@@ -1,3 +1,33 @@
+"""Initial script for preprocessing the Anipose dataset.
+
+Data from the Anipose paper is located at  https://doi.org/10.5061/dryad.nzs7h44s4.
+This Lightning Pose dataset is constructed from the file "fly-anipose.zip".
+
+NOTE: the Lightning Pose dataset does NOT contain hand-labeled frames!
+Instead, it is composed of filtered Anipose predictions, so that it was possible to
+extract labels across all cameras for a single instant in time, as well as extract
+context frames.
+
+In the following, "instance" refers to the pose/frames across all cameras at a given
+point in time; "frame" or "2D pose" refers to a single camera view.
+
+The Lightning Pose dataset was constructed following these steps:
+For a subset of sessions in
+"fly-anipose/fly-testing/{animal_id}/videos-raw-compressed":
+1. select frames and labels
+    a. remove any instance where average 3D reprojection error is >10 pixels
+    b. on remaining instances run k-means on the 3D poses; keep 25 instances/session
+    c. for the 25 instances, use the filtered 2D predictions (as opposed to orig preds)
+    d. set any keypoint where 2D reprojection error >10 pixels to NaN
+2. save out frames and labels
+3. copy videos over to LP dataset; all videos in this dataset are very short, no need to shorten
+4. verify the keypoint extraction by plotting the frames and labels (saved in labeled-data-check)
+
+After running this script you will need to create video snippets for each labeled frame
+(scripts/preprocess/video_snippets_eks.py)
+
+"""
+
 from pathlib import Path
 import shutil
 
@@ -13,14 +43,14 @@ from lp3d_analysis.video import export_frames, get_frames_from_idxs
 def insert_after_second_space(original_string, to_insert):
     """Helper function to manipulate filenames."""
     # Split the string into parts by spaces, remove empty strings
-    parts = [part for part in original_string.split(" ") if part]
+    parts = [part for part in original_string.split(' ') if part]
     # Ensure there are enough parts to insert after the second space
     if len(parts) > 2:
         # Reconstruct the string with the inserted value
-        return " ".join(parts[:2] + [to_insert] + parts[2:])
+        return ' '.join(parts[:2] + [to_insert] + parts[2:])
     else:
         # If the string has fewer than two spaces, return it unchanged
-        raise ValueError("String must contain at least two spaces to insert after the second space.")
+        raise ValueError('String must contain at least two spaces to insert after second space.')
 
 
 base_dir = Path('/media/mattw/multiview-data/_raw/fly-anipose/fly-anipose/fly-testing')
@@ -182,7 +212,7 @@ for animal in (InD_animals + OOD_animals):
                 video_file=dst,
                 save_dir=frames_save_dir,
                 frame_idxs=frame_idxs,
-                format="png",
+                format='png',
                 n_digits=8,
                 context_frames=2,
             )
@@ -202,7 +232,7 @@ for camera in camera_names:
 
 # Load the CSV files into a dictionary
 csv_files = {
-    cam: pd.read_csv(save_dir / f"CollectedData_{cam}.csv", index_col=0, header=[0, 1, 2])
+    cam: pd.read_csv(save_dir / f'CollectedData_{cam}.csv', index_col=0, header=[0, 1, 2])
     for cam in camera_names
 }
 
