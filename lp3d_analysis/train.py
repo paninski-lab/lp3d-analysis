@@ -463,7 +463,7 @@ def train_and_infer(
     
     # Run inference on all InD/OOD videos and compute unsupervised metrics
     for video_dir in inference_dirs:
-        print(f"Running inference on videos in {video_dir}")
+        #print(f"Running inference on videos in {video_dir}")
         video_files = [
             f for f in os.listdir(os.path.join(data_dir, video_dir)) if f.endswith('.mp4')
         ]
@@ -501,7 +501,7 @@ def train_and_infer(
                 print(f"Inference file {inference_csv} already exists. "
                       f"Skipping inference for {video_file}")
             else:
-                print(f"Running inference for {video_file}")
+                #print(f"Running inference for {video_file}")
                 inference_with_metrics(
                     video_file=os.path.join(data_dir, video_dir, video_file),
                     cfg_lp=cfg_lp.copy(),

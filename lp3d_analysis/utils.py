@@ -22,29 +22,22 @@ def extract_ood_frame_predictions(
     overwrite: bool,
     video_dir: str,
 ) -> None:
-
-    #pass
     
     new_csv_files = [f for f in os.listdir(data_dir) if f.endswith('_new.csv')]   
-    print(f"the new csv files are {new_csv_files}")
     # Use cfg_lp instead of cfg_lp_copy
-    
-
     #cfg_lp.data.csv_file = new_csv_files it was not here but maybe it should be here?
 
     for csv_file in new_csv_files:
         # load each of the new csv files and iterate through the index 
         prediction_name = '_'.join(csv_file.split('_')[1:])
         preds_file = os.path.join(results_dir, video_dir , f'predictions_{prediction_name}') 
-        print(f"the preds file is {preds_file}")
-        
+        #print(f"the preds file is {preds_file}")
         if os.path.exists(preds_file) and not overwrite:
             print(f'Predictions file {preds_file} already exists. Skipping.')
             continue
         
         results_list = []
         file_path = os.path.join(data_dir, csv_file)
-        
         df = pd.read_csv(file_path, header=[0,1,2], index_col=0)
 
         for img_path in df.index:
@@ -52,7 +45,6 @@ def extract_ood_frame_predictions(
             relative_img_path = '/'.join(img_path.split('/')[1:]) # removed 'labeled-data/'
             snippet_path = relative_img_path.replace('png', 'mp4')
             
-
             # Load the 51-frame csv file 
             snippet_file = os.path.join(results_dir, video_dir , snippet_path.replace('mp4', 'csv'))
             if os.path.exists(snippet_file):
@@ -73,17 +65,12 @@ def extract_ood_frame_predictions(
 
             # Add "set" column so this df is interpreted as labeled data predictions
             results_df.loc[:,("set", "", "")] = "train"
-
-            # save predictions
             results_df.to_csv(preds_file)
             print(f'Saved predictions to {preds_file}')
 
             # make sure I don't make any changes to the original cfg_lp
             cfg_lp.data.csv_file = csv_file
-            print(f"the preds file is {preds_file}")
             print(f"the cfg_lp is {cfg_lp}")
-            print(f" the csv file is {cfg_lp.data.csv_file}")
-            print(f" the file path is {file_path}")
         
             try:
                 compute_metrics(cfg=cfg_lp, preds_file=preds_file, data_module=None)

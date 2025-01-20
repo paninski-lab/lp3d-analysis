@@ -14,6 +14,7 @@ from lightning_pose.utils.scripts import (
 
 from eks.singlecam_smoother import ensemble_kalman_smoother_singlecam
 from eks.multicam_smoother import ensemble_kalman_smoother_multicam
+from eks.utils import convert_lp_dlc
 
 
 #TODO
@@ -41,13 +42,15 @@ def process_predictions(pred_file: str, column_structure=None):
     
     if column_structure is None:
         column_structure = df.loc[:, df.columns.get_level_values(2).isin(['x', 'y', 'likelihood'])].columns
-        keypoint_names = list(dict.fromkeys(column_structure.get_level_values(1)))
-        print(f'Keypoint names are {keypoint_names}')
-    
+    keypoint_names = list(dict.fromkeys(column_structure.get_level_values(1)))
+    print(f'Keypoint names are {keypoint_names}')
+    model_name = df.columns[0][0]
     numeric_cols = df.loc[:, column_structure]
+    print(f"numeric_cols are {numeric_cols}")
     array_data = numeric_cols.to_numpy()
     
     return column_structure, array_data, numeric_cols, keypoint_names, df.index
+
 
 def post_process_ensemble(
     cfg_lp: DictConfig,
@@ -104,84 +107,88 @@ def post_process_ensemble(
     for inference_dir in inference_dirs:
         output_dir = os.path.join(ensemble_dir, mode, inference_dir)
         os.makedirs(output_dir, exist_ok=True)
-        
         print(f"Post-processing ensemble predictions for {model_type} {n_labels} {seed_range[0]}-{seed_range[1]} for {inference_dirs} " )
 
-        if inference_dir == 'videos-for-each-labeled-frame':
-            if mode == 'eks_multiview':
-                # collect predictions from all seeds for all views 
-                markers_list_by_view = []
-                column_structures = {}
-                df_indices = {}
-                keypoint_names = [] 
-                for view in views:
-                    print(f"\nProcessing view {view}")
-                    view_markers = []
-                    for seed_dir in seed_dirs:
+        if mode == 'eks_multiview':
+            #input_dfs_list = [[] for _ in views]  # List of camera-specific lists of DataFrames
+            input_dfs_list = [] 
+            column_structure = None
+            keypoint_names = []
+            view_indices = {}
+            
+            for view_idx, view in enumerate(views):
+                markers_for_this_view = []
+                for seed_dir in seed_dirs:
+                    if inference_dir == 'videos-for-each-labeled-frame':
                         pred_file = os.path.join(
                             seed_dir,
                             inference_dir,
                             f'predictions_{view}_new.csv'
                         )
-                        print(f"Reading predictions from {pred_file}")
-                        column_structure, array_data, numeric_cols, keypoints, df_index = process_predictions(
-                            pred_file, 
-                            column_structures.get(view)
-                        )
-                        if array_data is not None:
-                            print(f"Found valid data with shape {array_data.shape}")
-                            view_markers.append(numeric_cols)
-                            column_structures[view] = column_structure
-                            df_indices[view] = df_index
-                            keypoint_names = keypoints if keypoints else keypoint_names
-                        else:
-                            print(f"No valid data found in {pred_file}")
+                    else: # all of the other inference directories that are not labeled. 
+                        base_files =os.listdir(os.path.join(seed_dir, inference_dir))
+                        csv_files = [f for f in base_files if f.endswith('.csv') and (f"{view}_" in f or f.endswith(f"_{view}.csv"))]
+                        if not csv_files:
+                            print(f"No matching files found for view: {view} in {seed_dir}")
+                            continue
+                        pred_file = os.path.join(seed_dir, inference_dir, csv_files[0])
                     
-                    if view_markers:  # Only append if we have valid markers for this view
-                        print(f"Collected {len(view_markers)} prediction sets for view {view}")
-                        markers_list_by_view.append(view_markers)
-                    else:
-                        print(f"No valid predictions found for view {view}")
+                    markers_curr = pd.read_csv(pred_file, header=[0, 1, 2], index_col=0)
+                    view_indices[view] = markers_curr.index
+                    column_structure = markers_curr.loc[:, markers_curr.columns.get_level_values(2).isin(['x', 'y', 'likelihood'])].columns
+                    # keypoint_names = [c[1] for c in markers_curr.columns[::3]] - I don't know why it didn't work 
+                    keypoint_names = list(dict.fromkeys(column_structure.get_level_values(1)))
+                    #print(f"keypoint_names: {keypoint_names}")
+                    model_name = markers_curr.columns[0][0]
+                    markers_curr_fmt = convert_lp_dlc(markers_curr,
+                                                  keypoint_names,
+                                                  model_name=model_name)
+                    
+                    # Preserve the index after conversion
+                    markers_curr_fmt.index = view_indices[view]
+                            
+                    markers_for_this_view.append(markers_curr_fmt)
+
+                    # column_structure, array_data, numeric_cols, keypoints, df_index = process_predictions(pred_file, column_structure)
+                    # if array_data is not None:
+                    #     numeric_cols.index = df_index
+                    #     # input_dfs_list[view_idx].append(numeric_cols)
+                    #     markers_for_this_view.append(numeric_cols)
+                    #     keypoint_names = keypoints if keypoints else keypoint_names
+                    #     view_indices[view] = df_index  # Store df_index for the current view
                 
-                if not markers_list_by_view:
-                    print("No valid predictions found for any view")
+                input_dfs_list.append(markers_for_this_view)
+
+
+            # Run multiview EKS
+            results_arrays, results_dfs = run_eks_multiview(
+                markers_list=input_dfs_list,
+                keypoint_names=keypoint_names,
+                views=views,
+            )                    
+
+            # save results for each view and compute metris 
+            for view in views:
+                if view not in results_arrays or view not in results_dfs:
+                    print(f"No results found for view {view}, skipping...")
                     continue
                 
-                print(f"\nProcessing {len(markers_list_by_view)} views with data")
-                print(f"Found {len(keypoint_names)} keypoints: {keypoint_names}")
+                result_df = results_dfs[view] 
 
-                # Process multi-view data
-                results_arrays, results_dfs = run_eks_multiview(
-                    markers_list_by_view=markers_list_by_view,
-                    keypoint_names=keypoint_names,
-                    views=views,
-                )
-     
-                #Save results for each view
-                for view, result_df in results_dfs.items():
-                    # Get column structure from smoothed dataframe
-                    column_structure = result_df.columns[
-                        result_df.columns.get_level_values(2).isin([
-                            'x', 'y', 'likelihood', 'x_ens_median', 'y_ens_median',
-                            'x_ens_var', 'y_ens_var', 'x_posterior_var', 'y_posterior_var'
-                        ])
-                    ]
-                    
-                    # Create DataFrame with proper structure
-                    result_df = pd.DataFrame(
-                        data=results_arrays[view],
-                        index=df_indices[view],
-                        columns=column_structure
-                    )
-                    
-                    # Add train set indicator
+                if inference_dir == 'videos-for-each-labeled-frame':
+                    if view in view_indices:
+                        result_df.index = view_indices[view]
+                    else:
+                        print(f"Warning: No df_index found for view {view}")
+                    # I need to to have the index too 
+                    # Ensure the index is preserved from the original data
                     result_df.loc[:,("set", "", "")] = "train"
-                    
+
                     preds_file = os.path.join(output_dir, f'predictions_{view}_new.csv')
                     result_df.to_csv(preds_file)
-                    print(f"Saved multi-view EKS predictions for {view} to {preds_file}")
-                    
-                    # Update cfg_lp for metrics computation
+                    print(f"Saved ensemble {mode} predictions for {view} view to {preds_file}")
+
+                    # Update cfg_lp for each view specifically
                     cfg_lp_view = cfg_lp.copy()
                     cfg_lp_view.data.csv_file = [f'CollectedData_{view}_new.csv']
                     cfg_lp_view.data.view_names = [view]
@@ -190,66 +197,91 @@ def post_process_ensemble(
                         compute_metrics(cfg=cfg_lp_view, preds_file=preds_file, data_module=None)
                         print(f"Successfully computed metrics for {preds_file}")
                     except Exception as e:
-                        print(f"Error computing metrics\n{e}")
+                        print(f"Error computing metrics for {view}: {str(e)}")
+                
+                else: 
+                    # I need to save the results for each view                    
+                    base_files = os.listdir(os.path.join(seed_dirs[0], inference_dir))
+                    print(f"base_files: {base_files}")
+                    #csv_files = [f for f in base_files if f.endswith('.csv') and f"{view}_" in f]
+                    csv_files = [f for f in base_files if f.endswith('.csv') and (f"{view}_" in f or f.endswith(f"_{view}.csv"))]
+                    if csv_files:
+                        base_name = csv_files[0]
+                        print("base_name is ", base_name)
+                        preds_file = os.path.join(output_dir, base_name)
+                        result_df.to_csv(preds_file)
+                        print(f"Saved ensemble {mode} predictions for {view} to {preds_file}")
+            
+        else: 
+            new_predictions_files = []   
+            for view in views: 
+                stacked_arrays = []
+                stacked_dfs = []
+                column_structure = None
+                keypoint_names = []
+                #base_name = None
 
-            else:
-                new_predictions_files = []   
-                for view in views: 
-                    stacked_arrays = []
-                    stacked_dfs = []
-                    column_structure = None
-                    keypoint_names = []
-                    
-                    for seed_dir in seed_dirs:
+                for seed_dir in seed_dirs:
+                    if inference_dir == 'videos-for-each-labeled-frame':
                         pred_file = os.path.join(
                             seed_dir,
                             inference_dir,
                             f'predictions_{view}_new.csv'
                         )
-                        column_structure, array_data, numeric_cols, keypoints, df_index = process_predictions(pred_file, column_structure)
-                        if array_data is not None:
-                            stacked_arrays.append(array_data)
-                            stacked_dfs.append(numeric_cols)
-                            keypoint_names = keypoints if keypoints else keypoint_names
+                    else:  
+                        base_files = os.listdir(os.path.join(seed_dir, inference_dir))
+                        print(f"base_files: {base_files}")
+                        # we need to think about it 
+                        csv_files = [f for f in base_files if f.endswith('.csv') and (f"{view}_" in f or f.endswith(f"_{view}.csv"))] # need a better way to do it 
+                        if not csv_files:
+                            print(f"No matching files found for view: {view} in {seed_dir}")
+                            continue
+                        pred_file = os.path.join(seed_dir, inference_dir, csv_files[0])
+                    
+                    column_structure, array_data, numeric_cols, keypoints, df_index = process_predictions(pred_file, column_structure)
+                    if array_data is not None:
+                        stacked_arrays.append(array_data)
+                        stacked_dfs.append(numeric_cols)
+                        keypoint_names = keypoints if keypoints else keypoint_names
 
-                    # Stack all arrays along the third dimension
-                    stacked_arrays = np.stack(stacked_arrays, axis=-1)
+                # Stack all arrays along the third dimension
+                stacked_arrays = np.stack(stacked_arrays, axis=-1)
 
-                    # Compute the mean/median along the third dimension
-                    if mode == 'ensemble_mean':
-                        aggregated_array = np.nanmean(stacked_arrays, axis=-1)
-                    elif mode == 'ensemble_median':
-                        aggregated_array = np.nanmedian(stacked_arrays, axis=-1)
-                    elif mode == 'eks_singleview':
-                        aggregated_array, smoothed_df = run_eks_singleview(
-                            markers_list= stacked_dfs,
-                            keypoint_names=keypoint_names
-                        )
-                        # filtered_df = smoothed_df.loc[
-                        #     : , smoothed_df.columns.get_level_values(2).isin(['x','y','likelihood'])
-                        # ]
-                        # # Update the aggregated_array to match the filtered columns
-                        # aggregated_array = filtered_df.to_numpy()
-                        # Dynamically update column structure based on smoothed_df
-                        column_structure = smoothed_df.columns[
-                            smoothed_df.columns.get_level_values(2).isin(
-                                ['x', 'y', 'likelihood', 'x_ens_median', 'y_ens_median','x_ens_var', 'y_ens_var', 'x_posterior_var', 'y_posterior_var']
-                            )
-                        ]          
-
-                    else:
-                        print(f"Invalid mode: {mode}")
-                        continue
-
-                    # Create a new DataFrame with the aggregated data
-                    result_df = pd.DataFrame(
-                        data=aggregated_array,
-                        index= df_index, #df.index,
-                        columns=column_structure
+                # Compute the mean/median along the third dimension
+                if mode == 'ensemble_mean':
+                    aggregated_array = np.nanmean(stacked_arrays, axis=-1)
+                elif mode == 'ensemble_median':
+                    aggregated_array = np.nanmedian(stacked_arrays, axis=-1)
+                elif mode == 'eks_singleview':
+                    aggregated_array, smoothed_df = run_eks_singleview(
+                        markers_list= stacked_dfs,
+                        keypoint_names=keypoint_names
                     )
+                    # filtered_df = smoothed_df.loc[
+                    #     : , smoothed_df.columns.get_level_values(2).isin(['x','y','likelihood'])
+                    # ]
+                    # # Update the aggregated_array to match the filtered columns
+                    # aggregated_array = filtered_df.to_numpy()
+                    # Dynamically update column structure based on smoothed_df
+                    column_structure = smoothed_df.columns[
+                        smoothed_df.columns.get_level_values(2).isin(
+                            ['x', 'y', 'likelihood', 'x_ens_median', 'y_ens_median','x_ens_var', 'y_ens_var', 'x_posterior_var', 'y_posterior_var']
+                        )
+                    ]          
 
+                else:
+                    print(f"Invalid mode: {mode}")
+                    continue
+                
+                # Create a new DataFrame with the aggregated data
+                result_df = pd.DataFrame(
+                    data=aggregated_array,
+                    index= df_index, #df.index, --> check about it because for the other ones that are not videos for each labeled frames I used stacked_dfs[0].index
+                    columns=column_structure
+                )
+
+                if inference_dir == 'videos-for-each-labeled-frame':
                     result_df.loc[:,("set", "", "")] = "train"
-
                     preds_file = os.path.join(output_dir, f'predictions_{view}_new.csv')
                     result_df.to_csv(preds_file)
                     new_predictions_files.append(preds_file)
@@ -268,141 +300,29 @@ def post_process_ensemble(
                     except Exception as e:
                         print(f"Error computing metrics\n{e}")
 
-        else:
-            if mode == 'eks_multiview':
-                markers_list_by_view = []
-                column_structures = {}
-                df_indices = {}
-                keypoint_names = []
-
-                for view in views:
-                    view_markers = []
-                    for seed_dir in seed_dirs:
-                        base_files = os.listdir(os.path.join(seed_dir, inference_dir))
-                        # Check if any files include `{view}_` in a case-sensitive manner
-                        csv_files = [f for f in base_files if f.endswith('.csv') and f"{view}_" in f]
-                        pred_file = os.path.join(seed_dir, inference_dir, csv_files[0])
-                        column_structure, array_data, numeric_cols, keypoints, df_index = process_predictions(
-                            pred_file, 
-                            column_structures.get(view)
-                        )
-                        if array_data is not None:
-                            view_markers.append(numeric_cols)
-                            column_structures[view] = column_structure
-                            df_indices[view] = df_index
-                            keypoint_names = keypoints if keypoints else keypoint_names
-
-                    if view_markers:
-                        markers_list_by_view.append(view_markers)
-
-                if not markers_list_by_view:
-                    print("No valid predictions found for any view")
-                    continue
-
-                # Process multi-view data
-                results_arrays, results_dfs = run_eks_multiview(
-                    markers_list_by_view=markers_list_by_view,
-                    keypoint_names=keypoint_names,
-                    views=views,
-                )
-
-                # Save results for each view
-                for view in views:
-                    result_df = results_dfs[view]
-                    # Get column structure from smoothed dataframe
-                    column_structure = result_df.columns[
-                        result_df.columns.get_level_values(2).isin([
-                            'x', 'y', 'likelihood', 'x_ens_median', 'y_ens_median',
-                            'x_ens_var', 'y_ens_var', 'x_posterior_var', 'y_posterior_var'
-                        ])
-                    ]
-
-                    # Create DataFrame with proper structure
+                else: 
+                    # Use the same base filename pattern that was found in the input directory
                     base_files = os.listdir(os.path.join(seed_dirs[0], inference_dir))
-                    csv_files = [f for f in base_files if f.endswith('.csv') and f"{view}_" in f]
-                    
+                    print(f"base_files: {base_files}")
+                    csv_files = [f for f in base_files if f.endswith('.csv') and (f"{view}_" in f or f.endswith(f"_{view}.csv"))]
+                    print(f"csv_files: {csv_files}")
                     if csv_files:
-                        # Use the same base filename pattern that was found in the input directory
                         base_name = csv_files[0]
-                        result_df = pd.DataFrame(
-                            data=results_arrays[view],
-                            index=df_indices[view],
-                            columns=column_structure
-                        )
-                        
+                        print("base_name is ", base_name)
                         preds_file = os.path.join(output_dir, base_name)
                         result_df.to_csv(preds_file)
                         print(f"Saved ensemble {mode} predictions for {view} view to {preds_file}")
-            
-            else:
-                for view in views: 
-                    stacked_arrays = []
-                    stacked_dfs = []
-                    column_structure = None
-                    keypoint_names = []
 
-                    for seed_dir in seed_dirs:
-                        base_files = os.listdir(os.path.join(seed_dir, inference_dir))
-                        print(f"base_files: {base_files}")
-                        # Check if any files match the `view`
-                        #csv_files = [f for f in base_files if f.endswith(f'{view}.csv')] # this can be dependent on a dataset or something like that... 
-                        # we need to think about it 
-                        # Check if any files include `{view}-` in a case-sensitive manner
-                        csv_files = [f for f in base_files if f.endswith('.csv') and f"{view}_" in f] 
-                        print(f"csv_files: {csv_files}")
-                        print("the length of csv_files is ", len(csv_files))
 
-                        # Handle the case where no matching files are found
-                        if not csv_files:
-                            print(f"No matching files found for view: {view} in {seed_dir}")
-                            continue
+                    # #base_name = os.path.basename(pred_file)
+                    #     preds_file = os.path.join(output_dir, base_name)
+                    #     print(f"the path for the preds_file is {preds_file}")
+                    #     # preds_file = os.path.join(output_dir, f'180607_004_{view}.csv')
+                    #     result_df.to_csv(preds_file)
+                    #     print(f"Saved ensemble {mode} predictions for {view} view to {preds_file}")
 
-                        pred_file = os.path.join(seed_dir, inference_dir, csv_files[0])
 
-                        column_structure, array_data, numeric_cols, keypoints, df_index = process_predictions(pred_file, column_structure)
-                        if array_data is not None:
-                            stacked_arrays.append(array_data)
-                            stacked_dfs.append(numeric_cols)
-                            keypoint_names = keypoints if keypoints else keypoint_names
-                        
-                    # Stack all arrays along the third dimension
-                    stacked_arrays = np.stack(stacked_arrays, axis=-1)
-
-                    # Compute the mean/median along the third dimension
-                    if mode == 'ensemble_mean':
-                        aggregated_array = np.nanmean(stacked_arrays, axis=-1)
-                    elif mode == 'ensemble_median':
-                        aggregated_array = np.nanmedian(stacked_arrays, axis=-1)
-                    elif mode == 'eks_singleview':
-                        aggregated_array, smoothed_df = run_eks_singleview(
-                            markers_list= stacked_dfs,
-                            keypoint_names=keypoint_names
-                        )
-                        # Dynamically update column structure based on smoothed_df
-                        column_structure = smoothed_df.columns[
-                            smoothed_df.columns.get_level_values(2).isin(
-                                ['x', 'y', 'likelihood', 'x_ens_median', 'y_ens_median','x_ens_var', 'y_ens_var', 'x_posterior_var', 'y_posterior_var']
-                            )
-                        ]             
-
-                    else:
-                        print(f"Invalid mode: {mode}. Skipping this view")
-                        continue
-
-                    # Create a new DataFrame with the aggregated data
-                    result_df = pd.DataFrame(
-                        data=aggregated_array,
-                        index= stacked_dfs[0].index, #df.index,
-                        columns=column_structure
-                    )
-                    # Use the same base filename pattern that was found in the input directory
-                    base_name = os.path.basename(pred_file)
-                    preds_file = os.path.join(output_dir, base_name)
-                    # preds_file = os.path.join(output_dir, f'180607_004_{view}.csv')
-                    result_df.to_csv(preds_file)
-                    print(f"Saved ensemble {mode} predictions for {view} view to {preds_file}")
                     
-
 
 def run_eks_singleview(
     markers_list: List[pd.DataFrame],
@@ -433,7 +353,7 @@ def run_eks_singleview(
     print(f'Input data loaded for keypoints: {keypoint_names}')
     print(f'Number of ensemble members: {len(markers_list)}')
 
-    #  # Convert DataFrame to have simple string column names
+    # Convert DataFrame to have simple string column names
     simple_markers_list = []
     for df in markers_list:
         simple_df = df.copy()
@@ -441,7 +361,6 @@ def run_eks_singleview(
         simple_markers_list.append(simple_df)
 
     print(f'First few columns of simplified DataFrame: {simple_markers_list[0].columns[:6]}')
-
 
     # Run the smoother with the simplified data
     df_smoothed, smooth_params_final = ensemble_kalman_smoother_singlecam(
@@ -461,123 +380,218 @@ def run_eks_singleview(
 
 
 
-
 def run_eks_multiview(
-    markers_list_by_view: List[List[pd.DataFrame]],
+    markers_list: List[List[pd.DataFrame]],
     keypoint_names: List[str],
     views: List[str],
     blocks: list = [],
-    #smooth_param: Optional[Union[float, list]] = None,
+    smooth_param: Optional[Union[float, list]] = None,
     s_frames: Optional[list] = None,
     quantile_keep_pca: float = 95,
     avg_mode: str = 'median',
-    zscore_threshold: float = 2,
+    var_mode: str = 'confidence_weighted_var',
+    verbose: bool = False,
 ) -> tuple[dict[str, np.ndarray], dict[str, pd.DataFrame]]:
-    """
-    Process multi-view data using Ensemble Kalman Smoother.
+
+    print(f'Input data loaded for keypoints for multiview data: {keypoint_names}')
     
-    Args:
-        markers_list_by_view: List of lists of DataFrames containing predictions from different 
-                            ensemble members, organized by view
-        keypoint_names: List of keypoint names to process
-        views: List of view names corresponding to the input data
-        blocks: List of keypoint blocks for correlated noise
-        smooth_param: Value for smoothing parameter
-        s_frames: Frames for automatic optimization if smooth_param not provided
-        quantile_keep_pca: Percentage of points kept for PCA
-        avg_mode: Mode for averaging across ensemble ('median' or 'mean')
-        zscore_threshold: Z-score threshold for filtering low ensemble std
-        
-    Returns:
-        tuple:
-            - Dict[str, np.ndarray]: Dictionary mapping view names to NumPy arrays containing 
-              smoothed predictions
-            - Dict[str, pd.DataFrame]: Dictionary mapping view names to DataFrames with full 
-              smoothed data
-    """
-    print(f"Processing {len(keypoint_names)} keypoints across {len(views)} views")
+    # print(f"length of markers_list is {len(markers_list)}")
+    # print(f"length of keypoint_names is {len(keypoint_names)}")
+    # print(f" the shape of markers list [0] is {len(markers_list[0])} ")
+    # print(f"the shape of markers_list[0][0] is {markers_list[0][0].shape}")
+    # print(f"markers list is {markers_list}")
+    # Initialize markers list
+    markers_list_all = []
     
-    # Initialize result containers with None instead of lists
-    final_results = {view: None for view in views}
-    results_arrays = {}
-    
-    # Loop over keypoints; apply EKS for each individually
+    # 1. iterate over keypoints
     for keypoint in keypoint_names:
-        # Initialize camera-specific markers for this keypoint - seperate body part predictions by camera name 
-        markers_by_cam = [[] for _ in range(len(views))]
-        # Collect data for each view and ensemble member
-        for view_idx, view_data in enumerate(markers_list_by_view):
-            print(f"Processing view {views[view_idx]} data")
-            for df in view_data:  # Each df is an ensemble member
-                # Extract x, y, likelihood columns for this keypoint
-                keypoint_cols = df.loc[:, df.columns.get_level_values(1) == keypoint]
+        # seperate predictions by camera view for current keypoint 
+        markers_list_cameras = [[] for _ in range(len(views))]
+        # 2. organize data by camera view
+        for c, camera_name in enumerate(views):
+            # get ensemble member for this camera 
+            ensemble_members = markers_list[c]
+            print(f"length of ensemble_members is {len(ensemble_members)}")
+            # 3. each dataframe in markers_list is an ensemble member - process each ensemble member 
+            for markers_curr in ensemble_members:
+                # get all columns for this keypoint 
+                # non_likelihood_keys = [
+                #     key for key in markers_curr.columns
+                #     if keypoint in str(key[1])  # Check second level of MultiIndex
+                # ]
+                non_likelihood_keys = [
+                    key
+                    for key in markers_curr.keys()
+                    if keypoint in str(key)  # Match keypoint name in column names
+                ]
+                print(f"non_likelihood_keys are {non_likelihood_keys}")
                 
-                if keypoint_cols.empty:
-                    print(f"No data found for keypoint {keypoint} in view {views[view_idx]}")
-                    continue
-                
-                # Create a new dataframe with required columns
-                coords_df = pd.DataFrame()
-                
-                # Get x, y, likelihood values maintaining original column structure
-                x_val = keypoint_cols.loc[:, keypoint_cols.columns.get_level_values(2) == 'x'].iloc[:, 0]
-                y_val = keypoint_cols.loc[:, keypoint_cols.columns.get_level_values(2) == 'y'].iloc[:, 0]
-                likelihood_val = keypoint_cols.loc[:, keypoint_cols.columns.get_level_values(2) == 'likelihood'].iloc[:, 0]
-                
-                coords_df[f'{keypoint}_x'] = x_val
-                coords_df[f'{keypoint}_y'] = y_val
-                coords_df[f'{keypoint}_likelihood'] = likelihood_val
-                
-                markers_by_cam[view_idx].append(coords_df)
-        
-        # Check if we have valid data for all views
-        if not all(cam_data for cam_data in markers_by_cam):
-            print(f"Missing data for some views for keypoint {keypoint}, skipping...")
-            continue
-        
-        try:
-            print(f"Running multi-camera EKS for keypoint {keypoint}")
+                markers_list_cameras[c].append(markers_curr[non_likelihood_keys])
             
-            # Run multi-camera EKS
-            smoothed_dfs, smooth_params_final, nll_values = ensemble_kalman_smoother_multicam(
-                markers_list_cameras=markers_by_cam,
-                keypoint_ensemble=keypoint,
-                smooth_param=1000,
-                quantile_keep_pca=quantile_keep_pca,
-                camera_names=views,
-                s_frames=None,
-                ensembling_mode=avg_mode,
-                zscore_threshold=zscore_threshold,
-            )
-            
-            # Store results for each view 
-            for view, smoothed_df in smoothed_dfs.items():
-                cols_to_keep = ['x', 'y', 'likelihood', 'x_ens_median', 'y_ens_median',
-                              'x_ens_var', 'y_ens_var', 'x_posterior_var', 'y_posterior_var']
-                filtered_df = smoothed_df.loc[:, smoothed_df.columns.get_level_values(2).isin(cols_to_keep)]
+        markers_list_all.append(markers_list_cameras)
 
-                if final_results[view] is None:
-                    final_results[view] = filtered_df
-                else:
-                    final_results[view] = pd.concat([final_results[view], filtered_df], axis=1)
-                
-                print(f"Updated results for view {view}, keypoint {keypoint}")
-    
-        except Exception as e:
-            print(f"Error processing keypoint {keypoint}: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
+    # run the ensemble kalman smoother for multiview data
+    camera_dfs, smooth_params_final = ensemble_kalman_smoother_multicam(
+        markers_list = markers_list_all,
+        keypoint_names = keypoint_names,
+        smooth_param = 1000,
+        quantile_keep_pca= 95, #quantile_keep_pca
+        camera_names = views,
+        s_frames = None,
+        avg_mode = avg_mode,
+        var_mode = var_mode,
+        verbose = verbose,
+    )
+
+    # Process results for each view
+    results_arrays = {}
+    results_dfs = {}
+
+    for view_idx, view in enumerate(views):
+        if view_idx >= len(camera_dfs) or camera_dfs[view_idx] is None:
+            print(f'No results available for view {view}')
             continue
+            
+        # Extract relevant columns for numpy array
+        result_cols = [
+            'x', 'y', 'likelihood', 
+            'x_ens_median', 'y_ens_median',
+            'x_ens_var', 'y_ens_var', 
+            'x_posterior_var', 'y_posterior_var'
+        ]
+        
+        df = camera_dfs[view_idx]
+        array_data = df.loc[
+            :, 
+            df.columns.get_level_values(2).isin(result_cols)
+        ].to_numpy()
+        
+        results_arrays[view] = array_data
+        results_dfs[view] = df
+        
+        print(f'Successfully processed view {view}')
     
-    # convert final_results to arrays 
-    for view, result_df in final_results.items():
-        if result_df is not None:
-            results_arrays[view] = result_df.to_numpy()
-            print(f"Processed view {view}: shape {results_arrays[view].shape}")
-        else:
-            print(f"No valid results for view {view}")
+    return results_arrays, results_dfs
 
-    return results_arrays, final_results 
+                    
+
+
+
+    
+    
+
+    
+
+
+
+# def run_eks_multiview(
+#     markers_list_by_view: List[List[pd.DataFrame]],
+#     keypoint_names: List[str],
+#     views: List[str],
+#     blocks: list = [],
+#     #smooth_param: Optional[Union[float, list]] = None,
+#     s_frames: Optional[list] = None,
+#     quantile_keep_pca: float = 95,
+#     avg_mode: str = 'median',
+#     zscore_threshold: float = 2,
+# ) -> tuple[dict[str, np.ndarray], dict[str, pd.DataFrame]]:
+    
+#     print(f"Processing {len(keypoint_names)} keypoints across {len(views)} views")
+    
+#     # Initialize result containers with None instead of lists
+#     final_results = {view: None for view in views}
+#     results_arrays = {}
+    
+#     # Loop over keypoints; apply EKS for each individually
+#     for keypoint in keypoint_names:
+#         # Initialize camera-specific markers for this keypoint - seperate body part predictions by camera name 
+#         markers_by_cam = [[] for _ in range(len(views))]
+#         # Collect data for each view and ensemble member
+#         for view_idx, view_data in enumerate(markers_list_by_view):
+#             print(f"Processing view {views[view_idx]} data")
+#             for df in view_data:  # Each df is an ensemble member
+#                 # Extract x, y, likelihood columns for this keypoint
+#                 keypoint_cols = df.loc[:, df.columns.get_level_values(1) == keypoint]
+                
+#                 if keypoint_cols.empty:
+#                     print(f"No data found for keypoint {keypoint} in view {views[view_idx]}")
+#                     continue
+
+#                 coords_df = pd.DataFrame({
+#                     f"{keypoint}_x": keypoint_cols.loc[:, keypoint_cols.columns.get_level_values(2) == 'x'].iloc[:, 0],
+#                     f"{keypoint}_y": keypoint_cols.loc[:, keypoint_cols.columns.get_level_values(2) == 'y'].iloc[:, 0],
+#                     f"{keypoint}_likelihood": keypoint_cols.loc[:, keypoint_cols.columns.get_level_values(2) == 'likelihood'].iloc[:, 0]
+#                 })
+
+#                 markers_by_cam[view_idx].append(coords_df)
+
+                
+#                 # # Create a new dataframe with required columns
+#                 # coords_df = pd.DataFrame()
+                
+#                 # # Get x, y, likelihood values maintaining original column structure
+#                 # x_val = keypoint_cols.loc[:, keypoint_cols.columns.get_level_values(2) == 'x'].iloc[:, 0]
+#                 # y_val = keypoint_cols.loc[:, keypoint_cols.columns.get_level_values(2) == 'y'].iloc[:, 0]
+#                 # likelihood_val = keypoint_cols.loc[:, keypoint_cols.columns.get_level_values(2) == 'likelihood'].iloc[:, 0]
+                
+#                 # coords_df[f'{keypoint}_x'] = x_val
+#                 # coords_df[f'{keypoint}_y'] = y_val
+#                 # coords_df[f'{keypoint}_likelihood'] = likelihood_val
+                
+#                 # markers_by_cam[view_idx].append(coords_df)
+        
+#         # Check if we have valid data for all views
+#         if not all(cam_data for cam_data in markers_by_cam):
+#             print(f"Missing data for some views for keypoint {keypoint}, skipping...")
+#             continue
+        
+#         try:
+#             print(f"Running multi-camera EKS for keypoint {keypoint}")
+            
+#             # Run multi-camera EKS
+#             smoothed_dfs, smooth_params_final, nll_values = ensemble_kalman_smoother_multicam(
+#                 markers_list_cameras=markers_by_cam,
+#                 keypoint_ensemble=keypoint,
+#                 smooth_param=1000,
+#                 quantile_keep_pca=quantile_keep_pca,
+#                 camera_names=views,
+#                 s_frames=None,
+#                 ensembling_mode=avg_mode,
+#                 zscore_threshold=zscore_threshold,
+#             )
+            
+#             # Store results for each view 
+#             for view, smoothed_df in smoothed_dfs.items():
+#                 # cols_to_keep = ['x', 'y', 'likelihood', 'x_ens_median', 'y_ens_median',
+#                 #               'x_ens_var', 'y_ens_var', 'x_posterior_var', 'y_posterior_var']
+#                 # filtered_df = smoothed_df.loc[:, smoothed_df.columns.get_level_values(2).isin(cols_to_keep)]
+#                 filtered_df = smoothed_df.loc[:, smoothed_df.columns.get_level_values(2).isin([
+#                     'x', 'y', 'likelihood', 'x_ens_median', 'y_ens_median',
+#                     'x_ens_var', 'y_ens_var', 'x_posterior_var', 'y_posterior_var'
+#                 ])]
+
+#                 if final_results[view] is None:
+#                     final_results[view] = filtered_df
+#                 else:
+#                     final_results[view] = pd.concat([final_results[view], filtered_df], axis=1)
+                
+#                 print(f"Updated results for view {view}, keypoint {keypoint}")
+    
+#         except Exception as e:
+#             print(f"Error processing keypoint {keypoint}: {str(e)}")
+#             import traceback
+#             print(traceback.format_exc())
+#             continue
+    
+#     # convert final_results to arrays 
+#     for view, result_df in final_results.items():
+#         if result_df is not None:
+#             results_arrays[view] = result_df.to_numpy()
+#             print(f"Processed view {view}: shape {results_arrays[view].shape}")
+#         else:
+#             print(f"No valid results for view {view}")
+
+#     return results_arrays, final_results 
 
 
 

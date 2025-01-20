@@ -1,8 +1,9 @@
 #TODO 
 # ask Matt about adding the views variable to the config file so we can pick the views that we have and in that way instead of iterating over files we will iterate over views - which will determine things
 
+
 # absolute path to lp yaml file
-lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_fly-anipose.yaml
+lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_mirror-mouse-separate.yaml
 # lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_crim13.yaml
 
 # [needed?] pipeline seed for initial data split
@@ -23,8 +24,8 @@ train_networks:
     - 0
     - 1
     - 2
-    # - 3
-    # - 4
+    - 3
+    - 4
   # number of ground truth labels for training
   n_hand_labels: 
     - 100
@@ -51,10 +52,10 @@ train_networks:
 
 # post-processing options
 post_processing:
-  eks_singleview:
+  eks_multiview:
     run: True
     overwrite: True
-  eks_multiview:
+  eks_singleview:
     run: True
     overwrite: True
   ensemble_mean:
