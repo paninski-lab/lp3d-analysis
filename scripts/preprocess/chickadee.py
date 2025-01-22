@@ -38,7 +38,7 @@ For the uncropped frames:
 
 For the cropped frames, the InD/OOD split can be performed as above.
 For the video snippets, it is best to train a detector model on the uncropped frames and then use
-that model to create cropped videos.
+that model to create cropped videos (scripts/preprocess/video_snippets_unlabeled_cropped.py)
 
 """
 from pathlib import Path

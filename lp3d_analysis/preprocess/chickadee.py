@@ -6,7 +6,6 @@ import cv2
 import imageio.v3 as iio
 import matplotlib.pyplot as plt
 import numpy as np
-# import pandas as pd
 
 import lp3d_analysis.preprocess.bundle_adjust as pySBA
 
@@ -22,22 +21,23 @@ def projectData(matfile):
     # From Selmaan
     camParams = pySBA.convertParams(matfile['camParams'])
     (pt3d, nFrames, nParts) = formatData(matfile['data_3D'])
-    sba = pySBA.PySBA(camParams, np.NaN, np.NaN, np.NaN, np.NaN) #points_2d[:, :2], camera_ind, point_2dind3d, points_2d[:, 2])
-    nCams = camParams.shape[0]
-    allLabels = np.full((nFrames, nCams, nParts, 2), np.NaN)
-    allCamScales = np.full((nFrames,nCams), np.NaN)
-    for nCam in range(nCams):
-        rVec = camParams[nCam][:3].reshape((1,3))
-        tVec = camParams[nCam][3:6]
-        for nPart in range(nParts):
-            allLabels[:, nCam, nPart, :] = sba.project(pt3d[:,nPart], np.tile(camParams[nCam],(nFrames,1)))
-        pt3d_centroid = np.mean(pt3d,axis=1) # average over parts
-        pt3d_centroid = sba.rotate(pt3d_centroid, np.tile(rVec,(nFrames,1))) # rotate to camera coordinates
-        camDist = pt3d_centroid[:,2] + tVec[2] # get z-axis distance ie along optical axis
-        camScale = camParams[nCam][6] / camDist # convert to focal length divided by distance
-        allCamScales[:,nCam] = camScale
-
-    return allLabels, allCamScales
+    return pySBA.project_3D_to_2D(pt3d, camParams)
+    # sba = pySBA.PySBA(camParams, np.NaN, np.NaN, np.NaN, np.NaN) #points_2d[:, :2], camera_ind, point_2dind3d, points_2d[:, 2])
+    # nCams = camParams.shape[0]
+    # allLabels = np.full((nFrames, nCams, nParts, 2), np.NaN)
+    # allCamScales = np.full((nFrames,nCams), np.NaN)
+    # for nCam in range(nCams):
+    #     rVec = camParams[nCam][:3].reshape((1,3))
+    #     tVec = camParams[nCam][3:6]
+    #     for nPart in range(nParts):
+    #         allLabels[:, nCam, nPart, :] = sba.project(pt3d[:,nPart], np.tile(camParams[nCam],(nFrames,1)))
+    #     pt3d_centroid = np.mean(pt3d,axis=1) # average over parts
+    #     pt3d_centroid = sba.rotate(pt3d_centroid, np.tile(rVec,(nFrames,1))) # rotate to camera coordinates
+    #     camDist = pt3d_centroid[:,2] + tVec[2] # get z-axis distance ie along optical axis
+    #     camScale = camParams[nCam][6] / camDist # convert to focal length divided by distance
+    #     allCamScales[:,nCam] = camScale
+    #
+    # return allLabels, allCamScales
 
 
 def find_best_frame_indices(frame_arrays: list, video_files: list):
