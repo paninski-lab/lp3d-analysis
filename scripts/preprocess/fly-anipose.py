@@ -1,35 +1,66 @@
+"""Initial script for preprocessing the Anipose dataset.
+
+Data from the Anipose paper is located at  https://doi.org/10.5061/dryad.nzs7h44s4.
+This Lightning Pose dataset is constructed from the file "fly-anipose.zip".
+
+NOTE: the Lightning Pose dataset does NOT contain hand-labeled frames!
+Instead, it is composed of filtered Anipose predictions, so that it was possible to
+extract labels across all cameras for a single instant in time, as well as extract
+context frames.
+
+In the following, "instance" refers to the pose/frames across all cameras at a given
+point in time; "frame" or "2D pose" refers to a single camera view.
+
+The Lightning Pose dataset was constructed following these steps:
+For a subset of sessions in
+"fly-anipose/fly-testing/{animal_id}/videos-raw-compressed":
+1. select frames and labels
+    a. remove any instance where average 3D reprojection error is >10 pixels
+    b. on remaining instances run k-means on the 3D poses; keep 25 instances/session
+    c. for the 25 instances, use the filtered 2D predictions (as opposed to orig preds)
+    d. set any keypoint where 2D reprojection error >10 pixels to NaN
+2. save out frames and labels
+3. copy videos over to LP dataset; all videos in this dataset are very short, no need to shorten
+4. verify the keypoint extraction by plotting the frames and labels (saved in labeled-data-check)
+
+After running this script you will need to create video snippets for each labeled frame
+(scripts/preprocess/video_snippets_eks.py)
+
+"""
+
 from pathlib import Path
 import shutil
 
 from sklearn.cluster import KMeans
-import cv2
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from lp3d_analysis import dataset_info
+from lp3d_analysis.preprocess import plot_labeled_frames
 from lp3d_analysis.video import export_frames, get_frames_from_idxs
 
 
 def insert_after_second_space(original_string, to_insert):
     """Helper function to manipulate filenames."""
     # Split the string into parts by spaces, remove empty strings
-    parts = [part for part in original_string.split(" ") if part]
+    parts = [part for part in original_string.split(' ') if part]
     # Ensure there are enough parts to insert after the second space
     if len(parts) > 2:
         # Reconstruct the string with the inserted value
-        return " ".join(parts[:2] + [to_insert] + parts[2:])
+        return ' '.join(parts[:2] + [to_insert] + parts[2:])
     else:
         # If the string has fewer than two spaces, return it unchanged
-        raise ValueError("String must contain at least two spaces to insert after the second space.")
+        raise ValueError('String must contain at least two spaces to insert after second space.')
 
 
-base_dir = Path('/media/mattw/multiview/raw/fly-anipose/fly-anipose/fly-testing')
-save_dir = Path('/media/mattw/multiview/datasets/fly-anipose')
+base_dir = Path('/media/mattw/multiview-data/_raw/fly-anipose/fly-anipose/fly-testing')
+save_dir = Path('/media/mattw/multiview-data/fly-anipose')
 
-camera_names = ['A', 'B', 'C', 'D', 'E', 'F']
+data_info = dataset_info['fly-anipose']
+camera_names = data_info['cam_names']
+InD_animals = data_info['InD_animals']
+OOD_animals = data_info['OOD_animals']
 frames_per_video = 25
-InD_animals = ['Fly 1_0', 'Fly 2_0', 'Fly 3_0']
-OOD_animals = ['Fly 4_0', 'Fly 5_0']
 
 error_thresh_3d = 10.0  # pixels; cannot go lower than this without losing most frames
 error_thresh_2d = 10.0  # pixels
@@ -103,13 +134,12 @@ for animal in (InD_animals + OOD_animals):
         # -----------------------------------------------------------
         for camera in camera_names:
 
-            video_name_w_cam = insert_after_second_space(video_name, f'Cam-{camera}')
+            video_name_w_cam = insert_after_second_space(video_name, camera)
 
             # load original predictions
             df_og = pd.read_hdf(pose_2d_dir / f'{video_name_w_cam}.h5')
             # predictions from multiple networks(?), only keep one
-            df_og = df_og.loc[:,
-                    df_og.columns.get_level_values('coords').isin(['x', 'y', 'likelihood'])]
+            df_og = df_og.loc[:, df_og.columns.get_level_values('coords').isin(['x', 'y', 'likelihood'])]
             # load reprojections
             df_rp = pd.read_hdf(pose_2d_proj_dir / f'{video_name_w_cam}.h5')
             assert df_og.shape == df_rp.shape
@@ -182,7 +212,7 @@ for animal in (InD_animals + OOD_animals):
                 video_file=dst,
                 save_dir=frames_save_dir,
                 frame_idxs=frame_idxs,
-                format="png",
+                format='png',
                 n_digits=8,
                 context_frames=2,
             )
@@ -202,93 +232,17 @@ for camera in camera_names:
 
 # Load the CSV files into a dictionary
 csv_files = {
-    cam: pd.read_csv(save_dir / f"CollectedData_{cam}.csv", index_col=0, header=[0, 1, 2])
+    cam: pd.read_csv(save_dir / f'CollectedData_{cam}.csv', index_col=0, header=[0, 1, 2])
     for cam in camera_names
 }
 
-# Define colors for body parts
-colors = {
-    'L1': 'darkred', 'R1': 'red',
-    'L2': 'darkgreen', 'R2': 'limegreen',
-    'L3': 'darkblue', 'R3': 'dodgerblue',
-}
-
-# Define the body part groups
-body_part_groups = ['L1', 'L2', 'L3', 'R1', 'R2', 'R3']
-
-# Loop through the rows
-for index in csv_files['A'].index:  # All files have the same indices
-    fig, axes = plt.subplots(2, 3, figsize=(12, 6.5))
-    axes = axes.flatten()
-
-    # Loop through cameras
-    for i, cam in enumerate(camera_names):
-        index_ = index.replace('Cam-A', f'Cam-{cam}')
-        # Get the corresponding row
-        row = csv_files[cam].loc[index_]
-
-        # Extract x, y coordinates (alternating columns)
-        x_coords = row.iloc[0::2]
-        y_coords = row.iloc[1::2]
-
-        # Get the original column names
-        columns = csv_files[cam].columns[0::2]  # Get x-coordinates' column names
-
-        # Load the corresponding image
-        image_path = save_dir / index_  # index is the relative path to the image
-        image = cv2.imread(str(image_path))
-
-        # Check if the image loaded successfully
-        if image is None:
-            print(f"Error: Could not load image {image_path}")
-            continue
-
-        # Convert BGR to RGB for plotting
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
-        # Plot the image
-        axes[i].imshow(image)
-        # axes[i].scatter(x_coords, y_coords, color='red', s=10)  # Plot keypoints
-        axes[i].axis('off')  # Turn off axes
-
-        # Loop through body part groups to plot points and connect them
-        for group in body_part_groups:
-            # Filter columns for the current group
-            group_columns = [col for col in columns if
-                             group in col[1]]  # Adjust to match the group name in the header
-            if not group_columns:
-                continue
-
-            # Get indices for the current group
-            group_indices = [columns.get_loc(col) for col in group_columns]
-
-            # Extract x and y for the current group
-            group_x = x_coords.iloc[group_indices].values
-            group_y = y_coords.iloc[group_indices].values
-
-            # Plot connections
-            axes[i].plot(group_x, group_y, color=colors[group], linewidth=1.5, alpha=0.8)
-
-            # Plot points
-            axes[i].scatter(group_x, group_y, color=colors[group], s=20)
-
-        # Add the camera name in the top-left corner
-        axes[i].text(
-            10, 10, f'Cam-{cam}',  # Position: (5, 5) pixels from the top-left
-            color='white', fontsize=12, weight='bold',
-            ha='left', va='top',
-            bbox=dict(facecolor='black', alpha=0.8)  # , boxstyle='round,pad=0.3')
-        )
-
-    # Remove all possible whitespace
-    fig.subplots_adjust(left=0, right=1, top=0.98, bottom=0, wspace=0, hspace=0)
-
-    # Add a suptitle with the row index
-    fig.suptitle(index.replace('Cam-A', ''), fontsize=16)
-
-    plt.tight_layout()
-
-    save_file = save_dir / index.replace('labeled-data', 'labeled-data-check').replace('Cam-A', '')
-    save_file.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(save_file, bbox_inches='tight', dpi=300)
-    plt.close(fig)
+plot_labeled_frames(
+    csv_files=csv_files,
+    data_dir=str(save_dir),
+    s=10.0,
+    linewidth=1.5,
+    txt_offset=10,
+    height=6.5,
+    skeleton=data_info['skeleton'],
+    skeleton_colors=data_info['skeleton_colors'],
+)

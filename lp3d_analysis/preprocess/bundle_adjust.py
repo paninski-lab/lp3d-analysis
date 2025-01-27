@@ -268,7 +268,83 @@ class PySBA:
 
         return res
 
-#%%
+
+def find_consistent_3d_points(points2D, cameraArray):
+    """
+    Finds the most consistent 3D points for multiple frames from 2D points across multiple cameras.
+
+    Args:
+        points2D (np.ndarray): Array of 2D points with shape (n_frames, n_cameras, 2).
+        cameraArray (np.ndarray): Array of camera parameters with shape (n_cameras, 11).
+
+    Returns:
+        np.ndarray: The estimated 3D points as an array of shape (n_frames, 3).
+    """
+    n_frames, n_cameras, _ = points2D.shape
+
+    # Prepare camera projection matrices for all cameras
+    projection_matrices = []
+    for i in range(n_cameras):
+        r_vec = cameraArray[i, :3]
+        t_vec = cameraArray[i, 3:6]
+        K = np.eye(3)
+        K[0, 0] = K[1, 1] = cameraArray[i, 6]  # Focal length
+        K[:2, 2] = cameraArray[i, 9:11]  # Principal point
+
+        R_mat = R.from_rotvec(r_vec).as_matrix()  # Convert rotation vector to matrix
+        P = K @ np.hstack((R_mat, t_vec.reshape(3, 1)))  # Projection matrix (3x4)
+        projection_matrices.append(P)
+
+    projection_matrices = np.array(projection_matrices)  # Shape: (n_cameras, 3, 4)
+
+    # Initialize results
+    points_3D = np.zeros((n_frames, 3))
+
+    # Process each frame
+    for frame_idx in range(n_frames):
+        A = []
+        # b = []
+        for cam_idx in range(n_cameras):
+            P = projection_matrices[cam_idx]
+            x, y = points2D[frame_idx, cam_idx]
+
+            # Build the A matrix for the current camera
+            A.append(x * P[2] - P[0])
+            A.append(y * P[2] - P[1])
+
+        # Solve for the 3D point using least squares
+        A = np.vstack(A)  # Shape: (2 * n_cameras, 4)
+        _, _, Vt = np.linalg.svd(A)
+        point_3D_homogeneous = Vt[-1]  # Last row of Vt corresponds to the solution
+        point_3D = point_3D_homogeneous[:3] / point_3D_homogeneous[3]  # Convert from homogeneous coordinates
+        points_3D[frame_idx] = point_3D
+
+    return points_3D
+
+
+def project_3D_to_2D(points_3d, camParams):
+    """points_3d of shape (n_frames, n_keypoints, 3)"""
+    sba = PySBA(camParams, np.NaN, np.NaN, np.NaN, np.NaN)
+    nFrames, nParts, _ = points_3d.shape
+    nCams = camParams.shape[0]
+    allLabels = np.full((nFrames, nCams, nParts, 2), np.NaN)
+    allCamScales = np.full((nFrames, nCams), np.NaN)
+    for nCam in range(nCams):
+        rVec = camParams[nCam][:3].reshape((1, 3))
+        tVec = camParams[nCam][3:6]
+        for nPart in range(nParts):
+            allLabels[:, nCam, nPart, :] = sba.project(
+                points_3d[:, nPart], np.tile(camParams[nCam], (nFrames, 1))
+            )
+        pt3d_centroid = np.nanmean(points_3d, axis=1)  # average over parts
+        pt3d_centroid = sba.rotate(pt3d_centroid, np.tile(rVec, (nFrames, 1)))  # rotate to camera coordinates
+        camDist = pt3d_centroid[:, 2] + tVec[2]  # get z-axis distance ie along optical axis
+        camScale = camParams[nCam][6] / camDist  # convert to focal length divided by distance
+        allCamScales[:, nCam] = camScale
+
+    return allLabels, allCamScales
+
+
 def convertParams(camParams):
     allParams = np.full((len(camParams), 11), np.NaN)
     for nCam in range(len(camParams)):
@@ -281,6 +357,7 @@ def convertParams(camParams):
         allParams[nCam,:] = np.hstack((r,t,f,d,c))
     return allParams
 
+
 def unconvertParams(camParamVec):
     thisK = np.full((3, 3), 0)
     thisK[0, 0] = camParamVec[6]
@@ -291,6 +368,7 @@ def unconvertParams(camParamVec):
     t = camParamVec[3:6]
     d = camParamVec[7:9]
     return {'K': thisK, 'R':r, 't':t, 'd':d}
+
 
 def getCameraArray(allCameras = ['lBack', 'lFront', 'lTop', 'rBack', 'rFront', 'rTop']):
     # Camera parameters are 3 rotation angles, 3 translations, 1 focal distance, 2 distortion params, and x,y principal points

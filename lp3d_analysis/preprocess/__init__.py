@@ -5,12 +5,12 @@ import matplotlib.pyplot as plt
 
 
 def plot_labeled_frames(
-    csv_files: list,
+    csv_files: dict,
     data_dir: str,
-    s: int = 1,
-    linewidth: int = 1,
+    s: float = 1.0,
+    linewidth: float = 1.0,
     txt_offset: int = 0,
-    height: int = 6,
+    height: float = 6.0,
     skeleton=None,
     skeleton_colors=None
 ) -> None:
@@ -96,7 +96,7 @@ def plot_labeled_frames(
         fig.subplots_adjust(left=0, right=1, top=0.98, bottom=0, wspace=0, hspace=0)
 
         # Add a suptitle with the row index
-        fig.suptitle(index.replace(base_cam_name, ''), fontsize=16)
+        fig.suptitle(index.replace(f'_{base_cam_name}', ''), fontsize=16)
 
         plt.tight_layout()
 
