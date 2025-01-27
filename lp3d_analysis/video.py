@@ -12,36 +12,113 @@ import numpy as np
 import pandas as pd
 
 
-def save_video(save_file, tmp_dir, framerate=20, frame_pattern='frame_%06d.jpeg', crf=23):
-    """
+# def save_video(save_file, tmp_dir, framerate=20, frame_pattern='frame_%06d.jpeg', crf=23):
+#     """
 
+#     Parameters
+#     ----------
+#     save_file : str
+#         absolute path of filename (including extension)
+#     tmp_dir : str
+#         temporary directory that stores frames of video; this directory will be deleted
+#     framerate : float, optional
+#         framerate of final video
+#     frame_pattern : str, optional
+#         string pattern used for naming frames in tmp_dir
+#     crf : 23
+#         compression rate factor; smaller is less compression, larger filesize
+
+#     """
+
+#     if os.path.exists(save_file):
+#         os.remove(save_file)
+
+#     # make mp4 from images using ffmpeg
+#     call_str = \
+#         'ffmpeg -r %f -i %s -c:v libx264 -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -crf %i %s' % (
+#             framerate, os.path.join(tmp_dir, frame_pattern), crf, save_file)
+#     print(call_str)
+#     subprocess.run(['/bin/bash', '-c', call_str], check=True)
+
+#     # delete tmp directory
+#     shutil.rmtree(tmp_dir)
+
+def save_video(save_file, tmp_dir, framerate=20, frame_pattern='frame_%06d.jpeg', crf=23):
+    """Save video from a directory of frames using ffmpeg.
+    
     Parameters
     ----------
     save_file : str
         absolute path of filename (including extension)
     tmp_dir : str
-        temporary directory that stores frames of video; this directory will be deleted
+        temporary directory that stores frames of video
     framerate : float, optional
         framerate of final video
     frame_pattern : str, optional
         string pattern used for naming frames in tmp_dir
-    crf : 23
+    crf : int, optional
         compression rate factor; smaller is less compression, larger filesize
-
     """
-
+    # Verify directories exist
+    if not os.path.exists(tmp_dir):
+        raise RuntimeError(f"Temporary directory does not exist: {tmp_dir}")
+    
+    # Create a temporary file listing all frames
+    frame_files = sorted([f for f in os.listdir(tmp_dir) if f.endswith('.jpeg')])
+    if not frame_files:
+        raise RuntimeError(f"No jpeg files found in {tmp_dir}")
+    
+    print(f"Found {len(frame_files)} frames in temporary directory")
+    
+    # Create a temporary file listing all frames
+    list_file = os.path.join(tmp_dir, "frames.txt")
+    with open(list_file, 'w') as f:
+        for frame in frame_files:
+            f.write(f"file '{os.path.join(tmp_dir, frame)}'\n")
+    
+    # Remove existing output file if it exists
     if os.path.exists(save_file):
         os.remove(save_file)
-
-    # make mp4 from images using ffmpeg
-    call_str = \
-        'ffmpeg -r %f -i %s -c:v libx264 -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -crf %i %s' % (
-            framerate, os.path.join(tmp_dir, frame_pattern), crf, save_file)
-    print(call_str)
-    subprocess.run(['/bin/bash', '-c', call_str], check=True)
-
-    # delete tmp directory
-    shutil.rmtree(tmp_dir)
+    
+    # Construct ffmpeg command using the concat demuxer
+    call_str = (
+        f'ffmpeg -y -f concat -safe 0 -r {framerate} -i "{list_file}" '
+        f'-c:v libx264 -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" '
+        f'-crf {crf} "{save_file}"'
+    )
+    
+    print(f"Executing ffmpeg command:\n{call_str}")
+    
+    try:
+        # Run ffmpeg with full error output
+        result = subprocess.run(
+            ['/bin/bash', '-c', call_str],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        print("Video creation successful")
+        
+        # Verify the video file was created
+        if not os.path.exists(save_file):
+            raise RuntimeError(f"ffmpeg completed but output file not found: {save_file}")
+            
+    except subprocess.CalledProcessError as e:
+        print(f"FFmpeg command failed with error:\n{e.stderr}")
+        print("\nDebug: First few frames in directory:")
+        for frame in frame_files[:5]:
+            print(frame)
+        raise RuntimeError(f"Failed to create video. FFmpeg error: {e.stderr}")
+        
+    finally:
+        # Clean up
+        if os.path.exists(list_file):
+            os.remove(list_file)
+        if os.path.exists(save_file):
+            print(f"Cleaning up temporary directory: {tmp_dir}")
+            shutil.rmtree(tmp_dir)
+        else:
+            print(f"Keeping temporary directory for debugging: {tmp_dir}")
 
 
 # a class that allows to pull up the frams from a video and the indexes of the frames

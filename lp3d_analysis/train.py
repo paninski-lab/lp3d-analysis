@@ -234,74 +234,6 @@ def train(
     except Exception as e:
         print(f"Error computing metrics\n{e}")
 
-    # # ----------------------------------------------------------------------------------
-    # # post-training analysis: predict on OOD labeled frames
-    # # ----------------------------------------------------------------------------------
-    # # update config file to point to OOD data
-    # csv_file_ood = os.path.join(cfg_lp.data.data_dir, "CollectedData_new.csv")
-    # if os.path.exists(csv_file_ood):
-    #     cfg_ood = cfg_lp.copy()
-    #     cfg_ood.data.csv_file = csv_file_ood
-    #     cfg_ood.training.imgaug = "default"
-    #     cfg_ood.training.train_prob = 1
-    #     cfg_ood.training.val_prob = 0
-    #     cfg_ood.training.train_frames = 1
-    #     # build dataset/datamodule
-    #     imgaug_transform_ood = get_imgaug_transform(cfg=cfg_ood)
-    #     dataset_ood = get_dataset(
-    #         cfg=cfg_ood, data_dir=data_dir, imgaug_transform=imgaug_transform_ood
-    #     )
-    #     data_module_ood = get_data_module(cfg=cfg_ood, dataset=dataset_ood, video_dir=video_dir)
-    #     data_module_ood.setup()
-    #     pretty_print_str("Predicting OOD images...")
-    #     # compute and save frame-wise predictions
-    #     preds_file_ood = os.path.join(hydra_output_directory, "predictions_new.csv")
-    #     predict_dataset(
-    #         cfg=cfg_ood,
-    #         trainer=trainer,
-    #         model=model,
-    #         data_module=data_module_ood,
-    #         ckpt_file=best_ckpt,
-    #         preds_file=preds_file_ood,
-    #     )
-    #     # compute and save various metrics
-    #     try:
-    #         compute_metrics(
-    #             cfg=cfg_ood, preds_file=preds_file_ood, data_module=data_module_ood
-    #         )
-    #     except Exception as e:
-    #         print(f"Error computing metrics\n{e}")
-
-    # # ----------------------------------------------------------------------------------
-    # # post-training analysis: unlabeled videos
-    # # ----------------------------------------------------------------------------------
-    # if cfg_lp.eval.predict_vids_after_training:
-    #     pretty_print_str("Predicting videos...")
-    #     if cfg_lp.eval.test_videos_directory is None:
-    #         filenames = []
-    #     else:
-    #         filenames = check_video_paths(return_absolute_path(cfg_lp.eval.test_videos_directory))
-    #         pretty_print_str(
-    #             f"Found {len(filenames)} videos to predict on "
-    #             f"(in cfg.eval.test_videos_directory)"
-    #         )
-
-    #     for v, video_file in enumerate(filenames):
-    #         assert os.path.isfile(video_file)
-    #         pretty_print_str(f"Predicting video: {video_file}...")
-    #         # get save name for prediction csv file
-    #         video_pred_dir = os.path.join(hydra_output_directory, "video_preds")
-    #         video_pred_name = os.path.splitext(os.path.basename(video_file))[0]
-    #         prediction_csv_file = os.path.join(video_pred_dir, video_pred_name + ".csv")
-    #         inference_with_metrics(
-    #             video_file=video_file,
-    #             ckpt_file=best_ckpt,
-    #             cfg_lp=cfg_lp,
-    #             preds_file=prediction_csv_file,
-    #             data_module=data_module_pred,
-    #             trainer=trainer,
-    #         )
-
     # ----------------------------------------------------------------------------------
     # clean up
     # ----------------------------------------------------------------------------------
@@ -364,7 +296,6 @@ def train_and_infer(
     data_dir: str,
     results_dir: str,
     inference_dirs: Optional[list] = None,
-    csv_prefix: Optional[str] = None,
     new_labels_csv: Optional[str] = None,
     overwrite: bool = False,
 ) -> None:
@@ -459,58 +390,87 @@ def train_and_infer(
         return
 
     # if best_ckpt is None:
-    #     raise ValueError("No checkpoint file available for inference")
+    #     raise ValueError("No checkpoint file available for inference") 
     
     # Run inference on all InD/OOD videos and compute unsupervised metrics
     for video_dir in inference_dirs:
-        print(f"Running inference on videos in {video_dir}")
-        video_files = [
-            f for f in os.listdir(os.path.join(data_dir, video_dir)) if f.endswith('.mp4')
-        ]
+        video_path = os.path.join(data_dir, video_dir)
+        video_files = [f for f in os.listdir(video_path) if f.endswith(".mp4")]
 
-        if len(video_files) == 0:
-            # assume we have a nested directory: directories full of mp4 files
-            video_files = []
-            sub_video_dirs = os.listdir(os.path.join(data_dir, video_dir))
-            print(f"Found {len(sub_video_dirs)} subdirectories in {video_dir}")
-            print("the subdirectories are:" + str(sub_video_dirs)) 
-
-            # Filter out files (e.g., .DS_Store) from the list of subdirectories
+        if not video_files:
             sub_video_dirs = [
-                sub_video_dir for sub_video_dir in sub_video_dirs
-                if os.path.isdir(os.path.join(data_dir, video_dir, sub_video_dir))
-            ] # I added this because it solved me a problem 
-
+                sub_dir for sub_dir in os.listdir(video_path)
+                if os.path.isdir(os.path.join(video_path, sub_dir))
+            ]
             for sub_video_dir in sub_video_dirs:
-                sub_video_dir_abs = os.path.join(data_dir, video_dir, sub_video_dir)
-                print(f"Checking {sub_video_dir}")
-                files_tmp = os.listdir(sub_video_dir_abs)
-                print(f"Found {len(files_tmp)} files in {sub_video_dir}")
-                video_files += [f'{sub_video_dir}/{f}' for f in files_tmp if f.endswith('.mp4')]
-        
-        print(f"Found {len(video_files)} videos in {video_dir}")
-        for video_file in video_files:
-            if csv_prefix:
-                raise NotImplementedError
-                # inference_csv_name = f'{csv_prefix}_{video_file.replace(".mp4", ".csv")}'
-            else:
-                inference_csv_name = video_file.replace(".mp4", ".csv")
-            inference_csv = os.path.join(results_dir, video_dir, inference_csv_name)
+                sub_path = os.path.join(video_path, sub_video_dir)
+                sub_files = [f for f in os.listdir(sub_path) if f.endswith(".mp4")]
+                video_files += [os.path.join(sub_video_dir, f) for f in sub_files]
 
+        for video_file in video_files:
+            inference_csv = os.path.join(
+                results_dir, video_dir, video_file.replace(".mp4", ".csv")
+            )
             if os.path.exists(inference_csv) and not overwrite:
                 print(f"Inference file {inference_csv} already exists. "
                       f"Skipping inference for {video_file}")
-            else:
-                print(f"Running inference for {video_file}")
-                inference_with_metrics(
-                    video_file=os.path.join(data_dir, video_dir, video_file),
-                    cfg_lp=cfg_lp.copy(),
-                    preds_file=inference_csv,
-                    ckpt_file=best_ckpt,
-                    data_module=data_module,
-                    trainer=trainer,
-                    metrics=False,
-                )
+                continue 
+
+            inference_with_metrics(
+                video_file=os.path.join(video_path, video_file),
+                cfg_lp=cfg_lp.copy(),
+                preds_file=inference_csv,
+                ckpt_file=best_ckpt,
+                data_module=data_module,
+                trainer=trainer,
+                metrics=False,
+            )
+
+        # if len(video_files) == 0:
+        #     # assume we have a nested directory: directories full of mp4 files
+        #     video_files = []
+        #     sub_video_dirs = os.listdir(os.path.join(data_dir, video_dir))
+        #     print(f"Found {len(sub_video_dirs)} subdirectories in {video_dir}")
+        #     print("the subdirectories are:" + str(sub_video_dirs)) 
+
+        #     # Filter out files (e.g., .DS_Store) from the list of subdirectories
+        #     sub_video_dirs = [
+        #         sub_video_dir for sub_video_dir in sub_video_dirs
+        #         if os.path.isdir(os.path.join(data_dir, video_dir, sub_video_dir))
+        #     ] # I added this because it solved me a problem 
+
+        #     for sub_video_dir in sub_video_dirs:
+        #         sub_video_dir_abs = os.path.join(data_dir, video_dir, sub_video_dir)
+        #         print(f"Checking {sub_video_dir}")
+        #         files_tmp = os.listdir(sub_video_dir_abs)
+        #         print(f"Found {len(files_tmp)} files in {sub_video_dir}")
+        #         video_files += [f'{sub_video_dir}/{f}' for f in files_tmp if f.endswith('.mp4')]
+        
+        # print(f"Found {len(video_files)} videos in {video_dir}")
+        # for video_file in video_files:
+        #     # if csv_prefix:
+        #     #     raise NotImplementedError
+        #     #     # inference_csv_name = f'{csv_prefix}_{video_file.replace(".mp4", ".csv")}'
+        #     # else:
+        #     #     inference_csv_name = video_file.replace(".mp4", ".csv")
+        #     # inference_csv = os.path.join(results_dir, video_dir, inference_csv_name)
+        #     inference_csv_name = video_file.replace(".mp4", ".csv")
+        #     inference_csv = os.path.join(results_dir, video_dir, inference_csv_name)
+
+        #     if os.path.exists(inference_csv) and not overwrite:
+        #         print(f"Inference file {inference_csv} already exists. "
+        #               f"Skipping inference for {video_file}")
+        #     else:
+        #         #print(f"Running inference for {video_file}")
+        #         inference_with_metrics(
+        #             video_file=os.path.join(data_dir, video_dir, video_file),
+        #             cfg_lp=cfg_lp.copy(),
+        #             preds_file=inference_csv,
+        #             ckpt_file=best_ckpt,
+        #             data_module=data_module,
+        #             trainer=trainer,
+        #             metrics=False,
+        #         )
 
 
 
