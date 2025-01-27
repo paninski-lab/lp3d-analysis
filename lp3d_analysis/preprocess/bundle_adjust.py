@@ -336,7 +336,7 @@ def project_3D_to_2D(points_3d, camParams):
             allLabels[:, nCam, nPart, :] = sba.project(
                 points_3d[:, nPart], np.tile(camParams[nCam], (nFrames, 1))
             )
-        pt3d_centroid = np.mean(points_3d, axis=1)  # average over parts
+        pt3d_centroid = np.nanmean(points_3d, axis=1)  # average over parts
         pt3d_centroid = sba.rotate(pt3d_centroid, np.tile(rVec, (nFrames, 1)))  # rotate to camera coordinates
         camDist = pt3d_centroid[:, 2] + tVec[2]  # get z-axis distance ie along optical axis
         camScale = camParams[nCam][6] / camDist  # convert to focal length divided by distance
@@ -344,7 +344,7 @@ def project_3D_to_2D(points_3d, camParams):
 
     return allLabels, allCamScales
 
-#%%
+
 def convertParams(camParams):
     allParams = np.full((len(camParams), 11), np.NaN)
     for nCam in range(len(camParams)):
@@ -357,6 +357,7 @@ def convertParams(camParams):
         allParams[nCam,:] = np.hstack((r,t,f,d,c))
     return allParams
 
+
 def unconvertParams(camParamVec):
     thisK = np.full((3, 3), 0)
     thisK[0, 0] = camParamVec[6]
@@ -367,6 +368,7 @@ def unconvertParams(camParamVec):
     t = camParamVec[3:6]
     d = camParamVec[7:9]
     return {'K': thisK, 'R':r, 't':t, 'd':d}
+
 
 def getCameraArray(allCameras = ['lBack', 'lFront', 'lTop', 'rBack', 'rFront', 'rTop']):
     # Camera parameters are 3 rotation angles, 3 translations, 1 focal distance, 2 distortion params, and x,y principal points

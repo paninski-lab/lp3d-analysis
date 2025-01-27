@@ -150,5 +150,94 @@ dataset_info = {
         ],
         'w3d': 1.0,
         'crop_size': None,
-    }
+    },
+    'rat7m': {
+        'InD_animals': [
+            's1-d1',
+            's2-d1',
+            's2-d2',
+            's5-d1',
+            's5-d2',
+        ],
+        'OOD_animals': [
+            's3-d1',
+            's4-d1',
+        ],
+        'cam_names': ['camera1', 'camera2', 'camera3', 'camera4', 'camera5', 'camera6'],
+        'keypoints': [
+            'HeadF', 'HeadB', 'HeadL',
+            'SpineF', 'SpineM', 'SpineL',
+            'Offset1', 'Offset2',
+            'HipL', 'HipR',
+            'ElbowL', 'ArmL', 'ShoulderL', 'ShoulderR', 'ElbowR', 'ArmR', 'KneeR', 'KneeL', 'ShinL', 'ShinR',
+        ],
+        'skeleton': np.array([
+            # head
+            [ 0,  1],
+            [ 1,  2],
+            [ 1,  0],
+            [ 0,  3],
+            [ 1,  3],
+            [ 2,  3],
+            # torso
+            [ 3,  4],
+            [ 4,  5],
+            [ 3,  6],
+            [ 4,  6],
+            [ 4,  7],
+            [ 5,  7],
+            [ 6,  7],
+            # l arm
+            [ 3, 12],
+            [12, 10],
+            [10, 11],
+            # r arm
+            [ 3, 13],
+            [13, 14],
+            [14, 15],
+            # l leg
+            [ 5,  8],
+            [ 8, 17],
+            [17, 18],
+            # r leg
+            [ 5,  9],
+            [ 9, 16],
+            [16, 19],
+        ]),
+        'skeleton_colors': [
+            # head
+            'blue',
+            'blue',
+            'blue',
+            'blue',
+            'blue',
+            'blue',
+            # torso
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'pink',
+            # l arm
+            'yellow',
+            'yellow',
+            'yellow',
+            # r arm
+            'limegreen',
+            'limegreen',
+            'limegreen',
+            # l leg
+            'dodgerblue',
+            'dodgerblue',
+            'dodgerblue',
+            # r leg
+            'darkblue',
+            'darkblue',
+            'darkblue',
+        ],
+        'w3d': 150,  # scaling factor for crops
+        'crop_size': (320, 320),  # (width, height)
+    },
 }

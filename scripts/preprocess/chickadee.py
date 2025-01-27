@@ -271,8 +271,9 @@ for fn in training_files:
             this_df_full = pd.DataFrame(
                 theseLabels[:, c, :, :].reshape(theseLabels.shape[0], -1),
                 columns=pdindex,
-                index=[f'labeled-data/{video}_{cam_name}/img{str(i).zfill(8)}.png' for i in
-                       best_idxs],
+                index=[
+                    f'labeled-data/{video}_{cam_name}/img{str(i).zfill(8)}.png' for i in best_idxs
+                ],
             )
             this_df_full.to_parquet(save_dir / labels_file)
 

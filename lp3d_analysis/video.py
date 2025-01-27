@@ -110,6 +110,7 @@ def export_frames(
     video_file: Path,
     save_dir: Path,
     frame_idxs: np.ndarray,
+    frame_idxs_save: None | np.ndarray = None,
     format: str = "png",
     n_digits: int = 8,
     context_frames: int = 0,
@@ -122,6 +123,9 @@ def export_frames(
     video_file: absolute path to video file from which to select frames
     save_dir: absolute path to directory in which selected frames are saved
     frame_idxs: indices of frames to grab
+    frame_idxs_save: indices to use for filename; if None, uses frame_idxs. In general this should
+        not be used, but there are some datasets where frame count offsets lead to a mismatch that
+        needs to be resolved this way
     format: only "png" currently supported
     n_digits: number of digits in image names
     context_frames: number of frames on either side of selected frame to also save
@@ -131,16 +135,30 @@ def export_frames(
 
     """
 
+    def add_context(idxs, ctx, cap):
+        if ctx <= 0:
+            return idxs
+        context_vec = np.arange(-ctx, ctx + 1)
+        idxs = (idxs[None, :] + context_vec[:, None]).flatten()
+        idxs.sort()
+        idxs = idxs[idxs >= 0]
+        idxs = idxs[idxs < int(cap.get(cv2.CAP_PROP_FRAME_COUNT))]
+        idxs = np.unique(idxs)
+        return idxs
+
     cap = cv2.VideoCapture(str(video_file))
 
     # expand frame_idxs to include context frames
-    if context_frames > 0:
-        context_vec = np.arange(-context_frames, context_frames + 1)
-        frame_idxs = (frame_idxs[None, :] + context_vec[:, None]).flatten()
-        frame_idxs.sort()
-        frame_idxs = frame_idxs[frame_idxs >= 0]
-        frame_idxs = frame_idxs[frame_idxs < int(cap.get(cv2.CAP_PROP_FRAME_COUNT))]
-        frame_idxs = np.unique(frame_idxs)
+    frame_idxs = add_context(frame_idxs, context_frames, cap)
+
+    # take care of mismatch between selected frames and save names
+    if frame_idxs_save is None:
+        frame_idxs_save = frame_idxs
+    else:
+        frame_idxs_save = add_context(frame_idxs_save, context_frames, cap)
+        l1 = len(frame_idxs)
+        l2 = len(frame_idxs_save)
+        assert l1 == l2, f'frame_idxs (len={l1}) and frame_idxs_save (len={l2}) must be same length'
 
     # load frames from video
     if reader == 'cv2':
@@ -154,9 +172,9 @@ def export_frames(
 
     # save out frames
     save_dir.mkdir(parents=True, exist_ok=True)
-    for frame, idx in zip(frames, frame_idxs):
+    for frame, idx, idx_save in zip(frames, frame_idxs, frame_idxs_save):
         cv2.imwrite(
-            filename=str(save_dir / f"img{str(idx).zfill(n_digits)}.{format}"),
+            filename=str(save_dir / f"img{str(idx_save).zfill(n_digits)}.{format}"),
             img=cv2.cvtColor(frame.transpose(1, 2, 0), cv2.COLOR_RGB2BGR),
         )
 
