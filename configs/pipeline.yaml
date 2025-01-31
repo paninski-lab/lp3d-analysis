@@ -33,7 +33,7 @@ train_networks:
   # model type
   model_types:
     - supervised
-   # - context
+    # - context
   # run inference on videos in these directories (independent of training videos)
   inference_dirs:
     # - videos_new

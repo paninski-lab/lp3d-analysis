@@ -28,6 +28,11 @@ def extract_ood_frame_predictions(
     #cfg_lp.data.csv_file = new_csv_files it was not here but maybe it should be here?
 
     for csv_file in new_csv_files:
+        # load original csv 
+        file_path = os.path.join(data_dir, csv_file)
+        original_df = pd.read_csv(file_path, header=[0,1,2], index_col=0)
+        original_index = original_df.index  
+
         # load each of the new csv files and iterate through the index 
         prediction_name = '_'.join(csv_file.split('_')[1:])
         preds_file = os.path.join(results_dir, video_dir , f'predictions_{prediction_name}') 
@@ -37,10 +42,13 @@ def extract_ood_frame_predictions(
             continue
         
         results_list = []
-        file_path = os.path.join(data_dir, csv_file)
-        df = pd.read_csv(file_path, header=[0,1,2], index_col=0)
+        #file_path = os.path.join(data_dir, csv_file)
+        #df = pd.read_csv(file_path, header=[0,1,2], index_col=0)
+        
+    
 
-        for img_path in df.index:
+        # for img_path in df.index:
+        for img_path in original_index:
             # process the paths 
             relative_img_path = '/'.join(img_path.split('/')[1:]) # removed 'labeled-data/'
             snippet_path = relative_img_path.replace('png', 'mp4')
@@ -61,7 +69,8 @@ def extract_ood_frame_predictions(
         # combine all results 
         if results_list:
             results_df = pd.concat(results_list)
-            results_df.sort_index(inplace=True)
+            #results_df.sort_index(inplace=True)
+            results_df = results_df.reindex(original_index)
 
             # Add "set" column so this df is interpreted as labeled data predictions
             results_df.loc[:,("set", "", "")] = "train"

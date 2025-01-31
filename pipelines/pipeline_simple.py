@@ -97,7 +97,7 @@ def pipeline(config_file: str):
                             model_type=model_type,
                             n_labels= n_hand_labels,
                             seed_range=(cfg_pipe.train_networks.ensemble_seeds[0], cfg_pipe.train_networks.ensemble_seeds[-1]),
-                            views= cfg_lp.data.view_names,
+                            views= list(cfg_lp.data.view_names), # before it was not a list... 
                             mode=mode,
                             inference_dirs=cfg_pipe.train_networks.inference_dirs,
                             overwrite=mode_config.overwrite,

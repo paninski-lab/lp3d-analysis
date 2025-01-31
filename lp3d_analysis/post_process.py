@@ -112,7 +112,7 @@ def post_process_ensemble(
         print(f"Post-processing ensemble predictions for {model_type} {n_labels} {seed_range[0]}-{seed_range[1]} for {inference_dirs} " )
 
         if mode == 'eks_multiview':
-            #input_dfs_list = [[] for _ in views]  # List of camera-specific lists of DataFrames
+
             input_dfs_list = [] 
             column_structure = None
             keypoint_names = []
@@ -149,7 +149,9 @@ def post_process_ensemble(
                     view_indices[view] = sample_df.index.tolist()  # Store as a list of indices
                 
                 all_pred_files.extend(pred_files_for_view)
-                        
+
+            print(f" the views names are {views}") 
+            print(f" the type of views names are {type(views)}")           
             # Get input_dfs_list and keypoint_names using format_data
             input_dfs_list, keypoint_names = format_data(
                 input_source=all_pred_files,
@@ -157,9 +159,9 @@ def post_process_ensemble(
             )
 
             # # Clean keypoint names by removing unexpected entries
-            keypoint_names = [
-                keypoint for keypoint in keypoint_names if not keypoint.startswith("Unnamed")
-            ]
+            # keypoint_names = [
+            #     keypoint for keypoint in keypoint_names if not keypoint.startswith("Unnamed")
+            # ]
 
             # Run multiview EKS
             results_dfs = run_eks_multiview(
@@ -175,10 +177,10 @@ def post_process_ensemble(
                 if inference_dir == 'videos-for-each-labeled-frame':
                     if view in view_indices:
                         result_df.index = view_indices[view]
+                        
                     else:
                         print(f"Warning: No df_index found for view {view}")
                     # I need to to have the index too 
-                    # Ensure the index is preserved from the original data
                     result_df.loc[:,("set", "", "")] = "train"
 
                     preds_file = os.path.join(output_dir, f'predictions_{view}_new.csv')
@@ -358,14 +360,7 @@ def run_eks_singleview(
     print(f'Input data loaded for keypoints: {keypoint_names}')
     print(f'Number of ensemble members: {len(markers_list)}')
 
-    # # Convert DataFrame to have simple string column names
-    # simple_markers_list = []
-    # for df in markers_list:
-    #     simple_df = df.copy()
-    #     simple_df.columns = [f"{col[1]}_{col[2]}" for col in df.columns]
-    #     simple_markers_list.append(simple_df)
 
-    #print(f'First few columns of simplified DataFrame: {simple_markers_list[0].columns[:6]}')
 
     # Run the smoother with the simplified data
     results_df, smooth_params_final = ensemble_kalman_smoother_singlecam(
@@ -377,8 +372,6 @@ def run_eks_singleview(
         avg_mode=avg_mode,
         var_mode=var_mode,
     )
-    #result = df_smoothed.loc[:, df_smoothed.columns.get_level_values(2).isin(['x', 'y', 'likelihood'])].to_numpy()
-    #result = results_df.loc[:, results_df.columns.get_level_values(2).isin(['x', 'y', 'likelihood', 'x_ens_median', 'y_ens_median','x_ens_var', 'y_ens_var', 'x_posterior_var', 'y_posterior_var'])].to_numpy()
     
     return results_df
 
@@ -424,11 +417,6 @@ def run_eks_multiview(
 
     print(f'Input data loaded for keypoints for multiview data: {keypoint_names}')
     
-    # print(f"length of markers_list is {len(markers_list)}")
-    # print(f"length of keypoint_names is {len(keypoint_names)}")
-    # print(f" the shape of markers list [0] is {len(markers_list[0])} ")
-    # print(f"the shape of markers_list[0][0] is {markers_list[0][0].shape}")
-    # print(f"markers list is {markers_list}")
     # Initialize markers list
     markers_list_all = []
     
@@ -439,7 +427,6 @@ def run_eks_multiview(
         # 2. organize data by camera view
         for c, camera_name in enumerate(views):
             ensemble_members = markers_list[c] # get ensemble member for this camera 
-            print(f"length of ensemble_members is {len(ensemble_members)}")
             # 3. each dataframe in markers_list is an ensemble member - process each ensemble member 
             for markers_curr in ensemble_members:
                 non_likelihood_keys = [
@@ -447,7 +434,6 @@ def run_eks_multiview(
                     for key in markers_curr.keys()
                     if keypoint in str(key)  # Match keypoint name in column names
                 ]
-                print(f"non_likelihood_keys are {non_likelihood_keys}")
                 
                 markers_list_cameras[c].append(markers_curr[non_likelihood_keys])
             
@@ -463,6 +449,7 @@ def run_eks_multiview(
         s_frames = None,
         avg_mode = avg_mode,
         var_mode = var_mode,
+        inflate_vars = False,
         verbose = verbose,
     )
 
