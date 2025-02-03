@@ -106,163 +106,34 @@ def post_process_ensemble(
             for seed in range(seed_range[0], seed_range[1] + 1)
     ]
 
+
+
     for inference_dir in inference_dirs:
         output_dir = os.path.join(ensemble_dir, mode, inference_dir)
         os.makedirs(output_dir, exist_ok=True)
         print(f"Post-processing ensemble predictions for {model_type} {n_labels} {seed_range[0]}-{seed_range[1]} for {inference_dirs} " )
+
         if mode == 'eks_multiview':
-            if inference_dir == 'videos-for-each-labeled-frame':
-                # Get all unique sequence directories from first seed
-                first_seed_dir = seed_dirs[0]
-                video_dir = os.path.join(first_seed_dir, inference_dir)
-                # Create a mapping of original directories and their files
-                original_structure = {}
-                for view in views:
-                    view_dirs = [
-                        d for d in os.listdir(video_dir) 
-                        if os.path.isdir(os.path.join(video_dir, d)) and d.endswith(f'_{view}')
-                    ]
-                    for dir_name in view_dirs:
-                        dir_path = os.path.join(video_dir, dir_name)
-                        csv_files = [f for f in os.listdir(dir_path) if f.endswith('.csv')]
-                        original_structure[dir_name] = csv_files
 
-                # Process each view-specific directory
-                for original_dir, csv_files in original_structure.items():
-                    print(f"Processing directory: {original_dir}")
-                    base_name = original_dir.rsplit('_', 1)[0]  # e.g., "180607_004"
-                    curr_view = original_dir.split('_')[-1]     # e.g., "bot" or "top"
-                    
-                    # Create output directory matching original structure
-                    sequence_output_dir = os.path.join(output_dir, original_dir)
-                    os.makedirs(sequence_output_dir, exist_ok=True)
-                    
-                    # Process each CSV file in the directory
-                    for csv_file in csv_files:
-                        print(f"Processing file: {csv_file}")
-                        
-                        # Collect corresponding files from all seeds and views
-                        all_pred_files = []
-                        for view in views:
-                            curr_dir_name = f"{base_name}_{view}"
-                            for seed_dir in seed_dirs:
-                                seed_video_dir = os.path.join(seed_dir, inference_dir)
-                                seed_sequence_dir = os.path.join(seed_video_dir, curr_dir_name)
-                                if os.path.exists(seed_sequence_dir):
-                                    pred_file = os.path.join(seed_sequence_dir, csv_file)
-                                    if os.path.exists(pred_file):
-                                        all_pred_files.append(pred_file)
-                        
-                        if all_pred_files:
-                            # Get input_dfs_list and keypoint_names for this file
-                            input_dfs_list, keypoint_names = format_data(
-                                input_source=all_pred_files,
-                                camera_names=views,
-                            )
-                            
-                            # Run multiview EKS for this file
-                            results_dfs = run_eks_multiview(
-                                markers_list=input_dfs_list,
-                                keypoint_names=keypoint_names,
-                                views=views,
-                            )
-                            
-                            # Save results using original filename
-                            for view, result_df in results_dfs.items():
-                                if view == curr_view:  # Only save for current view
-                                    result_file = os.path.join(sequence_output_dir, csv_file)
-                                    result_df.to_csv(result_file)
-                                    print(f"Saved EKS results to {result_file}")
-                
-                for view in views:
-                    print(f"\nProcessing predictions for view: {view}")
-                    
-                    # Load original CSV file to get frame paths
-                    orig_pred_file = os.path.join(seed_dirs[0], inference_dir, f'predictions_{view}_new.csv')
-                    original_df = pd.read_csv(orig_pred_file, header=[0, 1, 2], index_col=0)
-                    original_index = original_df.index
-                    results_list = []
-                    
-                    # Process each path from original predictions
-                    for img_path in original_index:
-                        # Get sequence name and base filename
-                        sequence_name = img_path.split('/')[1]  # e.g., "180623_000_bot"
-                        base_filename = os.path.splitext(os.path.basename(img_path))[0]  # e.g., "img107262"
-                        
-                        # Get the sequence CSV path
-                        snippet_file = os.path.join(output_dir, sequence_name, f"{base_filename}.csv")
-                        print(f"\nProcessing {img_path}")
-                        print(f"Looking for file: {snippet_file}")
-                        
-                        if os.path.exists(snippet_file):
-                            try:
-                                # Load the CSV with multi-index columns
-                                snippet_df = pd.read_csv(snippet_file, header=[0, 1, 2], index_col=0)
-                                print(f"Loaded snippet file with shape: {snippet_df.shape}")
-                                
-                                # Ensure odd number of frames
-                                assert snippet_df.shape[0] & 1 == 1, f"Expected odd number of frames, got {snippet_df.shape[0]}"
-                                
-                                # Get center frame index
-                                idx_frame = int(np.floor(snippet_df.shape[0] / 2))
-                                print(f"Extracting center frame at index {idx_frame}")
-                                
-                                # Extract center frame and set index
-                                center_frame = snippet_df.iloc[[idx_frame]]  # Keep as DataFrame with one row
-                                center_frame.index = [img_path]
-                                results_list.append(center_frame)
-                                
-                                print(f"Successfully extracted center frame")
-                                
-                            except Exception as e:
-                                print(f"Error processing {snippet_file}: {str(e)}")
-                                print("Full error:")
-                                import traceback
-                                traceback.print_exc()
-                        else:
-                            print(f"Warning: Could not find file {snippet_file}")
-                    
-                    if results_list:
-                        print(f"\nCombining {len(results_list)} processed frames")
-                        # Combine all results in original order
-                        results_df = pd.concat(results_list)
-                        print(f"Combined DataFrame shape: {results_df.shape}")
-                        
-                        # Reindex to match original
-                        results_df = results_df.reindex(original_index)
-                        print(f"Final DataFrame shape: {results_df.shape}")
-                        
-                        # Add "set" column for labeled data predictions
-                        results_df.loc[:,("set", "", "")] = "train"
-                        
-                        # Save predictions
-                        preds_file = os.path.join(output_dir, f'predictions_{view}_new.csv')
-                        results_df.to_csv(preds_file)
-                        print(f"Saved predictions to {preds_file}")
-                        
-                        # Compute metrics
-                        cfg_lp_view = cfg_lp.copy()
-                        cfg_lp_view.data.csv_file = [f'CollectedData_{view}_new.csv']
-                        cfg_lp_view.data.view_names = [view]
-                        
-                        try:
-                            compute_metrics(cfg=cfg_lp_view, preds_file=preds_file, data_module=None)
-                            print(f"Successfully computed metrics for {preds_file}")
-                        except Exception as e:
-                            print(f"Error computing metrics for {view}: {str(e)}")
-                    else:
-                        print(f"Warning: No frames processed for view {view}")
+            input_dfs_list = [] 
+            column_structure = None
+            keypoint_names = []
+            view_indices = {}
+            all_pred_files = []
+            
 
-            else:  # Handle other inference directories
-                input_dfs_list = [] 
-                column_structure = None
-                keypoint_names = []
-                view_indices = {}
-                all_pred_files = []
+            for view_idx, view in enumerate(views):
+                pred_files_for_view = []
+                for seed_dir in seed_dirs:
+                    if inference_dir == 'videos-for-each-labeled-frame':
+                        pred_files = os.path.join(
+                            seed_dir,
+                            inference_dir,
+                            f'predictions_{view}_new.csv'
+                        )
+                        pred_files_for_view.append(pred_files)
 
-                for view_idx, view in enumerate(views):
-                    pred_files_for_view = []
-                    for seed_dir in seed_dirs:
+                    else:  
                         base_files = os.listdir(os.path.join(seed_dir, inference_dir))
                         print(f"base_files: {base_files}")
                         pred_files = [
@@ -272,49 +143,73 @@ def post_process_ensemble(
                         ]
                         pred_files_for_view.extend(pred_files)
 
-                    if pred_files_for_view:
-                        print(f"pred_files_for_view: {pred_files_for_view}")
-                        sample_df = pd.read_csv(pred_files_for_view[0], header=[0, 1, 2], index_col=0)
-                        view_indices[view] = sample_df.index.tolist()
-                    
-                    all_pred_files.extend(pred_files_for_view)
-                    
-                print(f"The views names are {views}")
-                print(f"The type of views names are {type(views)}")
+
+                if pred_files_for_view:
+                # Read one file to get the indices
+                    print(f"pred_files_for_view: {pred_files_for_view}")
+                    sample_df = pd.read_csv(pred_files_for_view[0], header=[0, 1, 2], index_col=0)
+                    view_indices[view] = sample_df.index.tolist()  # Store as a list of indices
                 
-                # Get input_dfs_list and keypoint_names using format_data
-                input_dfs_list, keypoint_names = format_data(
-                    input_source=all_pred_files,
-                    camera_names=views,
-                )
+                all_pred_files.extend(pred_files_for_view)
 
-                print(f"The shape of input_dfs_list is {len(input_dfs_list)}")
-                print(f"Input dfs list is {input_dfs_list}")
+            print(f" the views names are {views}") 
+            print(f" the type of views names are {type(views)}")           
+            # Get input_dfs_list and keypoint_names using format_data
+            input_dfs_list, keypoint_names = format_data(
+                input_source=all_pred_files,
+                camera_names=views,
+            )
 
-                # Run multiview EKS
-                results_dfs = run_eks_multiview(
-                    markers_list=input_dfs_list,
-                    keypoint_names=keypoint_names,
-                    views=views,
-                )
+            print(f"the shape of input_dfs_list is {len(input_dfs_list)}")
 
-                # Save results for each view
-                for view in views:
-                    result_df = results_dfs[view]
+            # Run multiview EKS
+            results_dfs = run_eks_multiview(
+                markers_list=input_dfs_list,
+                keypoint_names=keypoint_names,
+                views=views,
+            )                    
+            # save results for each view and compute metris 
+            for view in views:
+                result_df = results_dfs[view] 
+
+                if inference_dir == 'videos-for-each-labeled-frame':
+                    if view in view_indices:
+                        result_df.index = view_indices[view]
+                        
+                    else:
+                        print(f"Warning: No df_index found for view {view}")
+
+                    # I need to to have the index too 
+                    result_df.loc[:,("set", "", "")] = "train"
+
+                    preds_file = os.path.join(output_dir, f'predictions_{view}_new.csv')
+                    result_df.to_csv(preds_file)
+                    print(f"Saved ensemble {mode} predictions for {view} view to {preds_file}")
+
+                    # Update cfg_lp for each view specifically
+                    cfg_lp_view = cfg_lp.copy()
+                    cfg_lp_view.data.csv_file = [f'CollectedData_{view}_new.csv']
+                    cfg_lp_view.data.view_names = [view]
                     
-                    # Use the same base filename pattern
+                    try:
+                        compute_metrics(cfg=cfg_lp_view, preds_file=preds_file, data_module=None)
+                        print(f"Successfully computed metrics for {preds_file}")
+                    except Exception as e:
+                        print(f"Error computing metrics for {view}: {str(e)}")
+
+                                
+                else: 
+                    # I need to save the results for each view                    
                     base_files = os.listdir(os.path.join(seed_dirs[0], inference_dir))
                     print(f"base_files: {base_files}")
+                    #csv_files = [f for f in base_files if f.endswith('.csv') and f"{view}_" in f]
                     csv_files = [f for f in base_files if f.endswith('.csv') and (f"{view}_" in f or f.endswith(f"_{view}.csv"))]
-                    
                     if csv_files:
                         base_name = csv_files[0]
                         print("base_name is ", base_name)
                         preds_file = os.path.join(output_dir, base_name)
                         result_df.to_csv(preds_file)
-                        print(f"Saved ensemble {mode} predictions for {view} view to {preds_file}")
-
-
+                        print(f"Saved ensemble {mode} predictions for {view} to {preds_file}")
             
         else: 
             new_predictions_files = []   
@@ -551,7 +446,7 @@ def run_eks_multiview(
         s_frames = None,
         avg_mode = avg_mode,
         var_mode = var_mode,
-        inflate_vars = True,
+        inflate_vars = False,
         verbose = verbose,
     )
 

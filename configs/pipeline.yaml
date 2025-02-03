@@ -1,7 +1,7 @@
 #TODO 
 # ask Matt about adding the views variable to the config file so we can pick the views that we have and in that way instead of iterating over files we will iterate over views - which will determine things
 
-dataset_name: fly-anipose
+dataset_name: mirror-mouse-separate
 
 lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_${dataset_name}.yaml
 
@@ -38,7 +38,7 @@ train_networks:
   inference_dirs:
     # - videos_new
     - videos-for-each-labeled-frame
-    - videos_debug
+    # - videos_debug
 
   # training parameters
   # min_steps: 5000
@@ -56,17 +56,17 @@ train_networks:
 post_processing:
 
   eks_singleview:
-    run: True
-    overwrite: True
+    run: False
+    overwrite: False
   eks_multiview:
     run: True
     overwrite: True
   ensemble_mean:
-    run: True
-    overwrite: True
+    run: False
+    overwrite: False
   ensemble_median:
-    run: True
-    overwrite: True
+    run: False
+    overwrite: False
     
 
 # visualization options
