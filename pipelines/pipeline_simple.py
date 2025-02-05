@@ -4,7 +4,7 @@ import os
 from lp3d_analysis.io import load_cfgs
 from lp3d_analysis.train import train_and_infer
 from lp3d_analysis.utils import extract_ood_frame_predictions
-from lp3d_analysis.post_process import post_process_ensemble
+from lp3d_analysis.post_process import post_process_ensemble_labels, post_process_ensemble_videos
 
 
 
@@ -88,20 +88,57 @@ def pipeline(config_file: str):
                             video_dir='videos-for-each-labeled-frame',
                         )
                 
-                for mode, mode_config in cfg_pipe.post_processing.items():
-                    if mode_config.run: # if the mode is mean or median or eks_singleview 
-                        #print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}"
-                        post_process_ensemble(
-                            cfg_lp=cfg_lp_copy.copy(),
-                            results_dir=results_dir,
-                            model_type=model_type,
-                            n_labels= n_hand_labels,
-                            seed_range=(cfg_pipe.train_networks.ensemble_seeds[0], cfg_pipe.train_networks.ensemble_seeds[-1]),
-                            views= list(cfg_lp.data.view_names), # before it was not a list... 
-                            mode=mode,
-                            inference_dirs=cfg_pipe.train_networks.inference_dirs,
-                            overwrite=mode_config.overwrite,
-                        )
+    
+    for mode, mode_config in cfg_pipe.post_processing_videos.items():
+        for model_type in cfg_pipe.train_networks.model_types:
+            for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
+                if mode_config.run: # if the mode is mean or median or eks_singleview 
+                    #print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}"
+                    post_process_ensemble_videos(
+                        cfg_lp=cfg_lp_copy.copy(),
+                        results_dir=results_dir,
+                        model_type=model_type,
+                        n_labels= n_hand_labels,
+                        seed_range=(cfg_pipe.train_networks.ensemble_seeds[0], cfg_pipe.train_networks.ensemble_seeds[-1]),
+                        views= list(cfg_lp.data.view_names), # before it was not a list... 
+                        mode=mode,
+                        inference_dirs=cfg_pipe.train_networks.inference_dirs,
+                        overwrite=mode_config.overwrite,
+                    )
+
+    for mode, mode_config in cfg_pipe.post_processing_labels.items():
+        for model_type in cfg_pipe.train_networks.model_types:
+            for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
+                if mode_config.run: # if the mode is mean or median or eks_singleview 
+                    #print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}"
+                    post_process_ensemble_labels(
+                        cfg_lp=cfg_lp_copy.copy(),
+                        results_dir=results_dir,
+                        model_type=model_type,
+                        n_labels= n_hand_labels,
+                        seed_range=(cfg_pipe.train_networks.ensemble_seeds[0], cfg_pipe.train_networks.ensemble_seeds[-1]),
+                        views= list(cfg_lp.data.view_names), # before it was not a list... 
+                        mode=mode,
+                        inference_dirs=cfg_pipe.train_networks.inference_dirs,
+                        overwrite=mode_config.overwrite,
+                    )
+
+
+
+                # for mode, mode_config in cfg_pipe.post_processing.items():
+                #     if mode_config.run: # if the mode is mean or median or eks_singleview 
+                #         #print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}"
+                #         post_process_ensemble(
+                #             cfg_lp=cfg_lp_copy.copy(),
+                #             results_dir=results_dir,
+                #             model_type=model_type,
+                #             n_labels= n_hand_labels,
+                #             seed_range=(cfg_pipe.train_networks.ensemble_seeds[0], cfg_pipe.train_networks.ensemble_seeds[-1]),
+                #             views= list(cfg_lp.data.view_names), # before it was not a list... 
+                #             mode=mode,
+                #             inference_dirs=cfg_pipe.train_networks.inference_dirs,
+                #             overwrite=mode_config.overwrite,
+                #         )
                     
 
 
