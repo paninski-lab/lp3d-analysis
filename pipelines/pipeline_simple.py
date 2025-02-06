@@ -146,7 +146,7 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
     elif model_type == 'context':
         cfg_overrides.append({
             "model": {
-                "model_type": "heatmap_mchrnn",
+                "model_type": "heatmap_mhcrnn",
                 "losses_to_use": [],
             },
         })
@@ -168,11 +168,12 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
             "max_epochs": None,
             "val_check_interval": val_check_interval,
             "check_val_every_n_epoch": None,
-            "unfreeze_step": 30,
-            "unfreeze_epoch": None,
+            "unfreezing_step": 30,
+            "unfreezing_epoch": None,
             "lr_scheduler_params": {
                 "multisteplr": {
                     "milestone_steps": milestone_steps,
+                    "milestones": None,
                 }
             },
         },
@@ -181,6 +182,11 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
         }
     })
     cfg_lp_copy = OmegaConf.merge(cfg_lp, *cfg_overrides)
+    del cfg_lp_copy.training.min_epochs
+    del cfg_lp_copy.training.max_epochs
+    del cfg_lp_copy.training.check_val_every_n_epoch
+    del cfg_lp_copy.training.unfreezing_epoch
+    del cfg_lp_copy.training.lr_scheduler_params.multisteplr.milestones
     return cfg_lp_copy
 
 

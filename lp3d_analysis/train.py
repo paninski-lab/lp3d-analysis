@@ -22,7 +22,6 @@ def chdir(dir):
 
 def train_and_infer(
     cfg_lp: DictConfig,
-    data_dir: str,
     model_dir: str,
     inference_dirs: Optional[list] = None,
     overwrite: bool = False,
@@ -37,6 +36,7 @@ def train_and_infer(
 
     if model is None or overwrite:
         print('Training model:')
+        Path(model_dir).mkdir(parents=True, exist_ok=True)
         with chdir(model_dir):
             model = train(cfg=cfg_lp)
         gc.collect()
@@ -51,7 +51,7 @@ def train_and_infer(
 
         # Run inference on all InD/OOD videos and compute unsupervised metrics
         for video_dir in inference_dirs:
-            video_path = os.path.join(data_dir, video_dir)
+            video_path = os.path.join(cfg_lp.data.data_dir, video_dir)
             video_files = [f for f in os.listdir(video_path) if f.endswith(".mp4")]
 
             if not video_files:
@@ -71,8 +71,7 @@ def train_and_infer(
 
                 model.predict_on_video_file(
                     video_file=os.path.join(video_path, video_file),
-                    # Do we really care where output is stored?
-                    #output_dir=os.path.join(model_dir, video_dir),
+                    output_dir=os.path.join(model.model_dir, video_dir),
                     compute_metrics=False,
                 )
     else:
