@@ -48,6 +48,7 @@ train_networks:
   # train_check_interval: 10
   min_steps: 5000 # need 5000 I use 500 for testing 
   max_steps: 5000 # need 5000
+  unfreezing_step: 260
   milestone_steps: [2000, 3000, 4000]
   val_check_interval: 5
   train_check_interval: 5

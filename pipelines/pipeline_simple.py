@@ -159,6 +159,7 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
     min_steps = cfg_pipe.train_networks.min_steps
     max_steps = cfg_pipe.train_networks.max_steps
     milestone_steps = cfg_pipe.train_networks.milestone_steps
+    unfreezing_step = cfg_pipe.train_networks.unfreezing_step
     val_check_interval = cfg_pipe.train_networks.val_check_interval
     cfg_overrides.append({
         "training": {
@@ -168,7 +169,7 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
             "max_epochs": None,
             "val_check_interval": val_check_interval,
             "check_val_every_n_epoch": None,
-            "unfreezing_step": 30,
+            "unfreezing_step": unfreezing_step,
             "unfreezing_epoch": None,
             "lr_scheduler_params": {
                 "multisteplr": {
