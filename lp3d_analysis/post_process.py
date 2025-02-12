@@ -20,7 +20,7 @@ from eks.utils import convert_lp_dlc, format_data
 #TODO
 # 1. Implement post_process_ensemble_multiview
 
-def process_predictions(pred_file: str, column_structure=None):
+def process_predictions(pred_file: str, include_likelihood = True,  column_structure=None):
     """
     Process predictions from a CSV file and return relevant data structures.
     
@@ -39,9 +39,12 @@ def process_predictions(pred_file: str, column_structure=None):
         return None, None, None, None, None
         
     df = pd.read_csv(pred_file, header=[0, 1, 2], index_col=0)
+
+    # Select column structure: Default includes 'x', 'y', and 'likelihood'
+    selected_coords = ['x', 'y', 'likelihood'] if include_likelihood else ['x', 'y']
     
     if column_structure is None:
-        column_structure = df.loc[:, df.columns.get_level_values(2).isin(['x', 'y', 'likelihood'])].columns
+        column_structure = df.loc[:, df.columns.get_level_values(2).isin(selected_coords)].columns
     keypoint_names = list(dict.fromkeys(column_structure.get_level_values(1)))
     print(f'Keypoint names are {keypoint_names}')
     model_name = df.columns[0][0]
@@ -187,12 +190,15 @@ def post_process_ensemble_labels(
         for view in views:
             view_dirs = [
                 d for d in os.listdir(video_dir) 
-                if os.path.isdir(os.path.join(video_dir, d)) and d.endswith(f'_{view}')
+                if os.path.isdir(os.path.join(video_dir, d)) and 
+                (d.endswith(f'_{view}') or (f'Cam-{view}' in d))
             ]
             print(f"view_dirs: {view_dirs}")
             for dir_name in view_dirs:
                 dir_path = os.path.join(video_dir, dir_name)
+                print(f"Checking directory: {dir_path}")
                 csv_files = [f for f in os.listdir(dir_path) if f.endswith('.csv')]
+                print(f"Found {len(csv_files)} CSV files in {dir_name}")
                 original_structure[dir_name] = csv_files
 
 
@@ -200,28 +206,46 @@ def post_process_ensemble_labels(
             # Process each view-specific directory
             for original_dir, csv_files in original_structure.items():
                 print(f"Processing directory: {original_dir}")
-                base_name = original_dir.rsplit('_', 1)[0]  # e.g., "180607_004"
-                curr_view = original_dir.split('_')[-1]     # e.g., "bot" or "top"
+                parts = original_dir.split("_")
+                print(f"parts: {parts}")
+                curr_view = None
+                for part in parts:
+                    if "Cam-" in part: # Case 1: View is in "Cam-{view}" format
+                        curr_view = part.split("-")[-1] # Extract only the view (e.g., "A" from "Cam-A")
+                        print(f"curr_view: {curr_view}")
+                        break
+                
+                if curr_view is None: # case 2: if no "cam-{view}" in the directory name
+                    curr_view = parts[-1]  # Use the last part as the view
 
-                # Create output directory matching original structure
+                print(f"Identified view (curr_view): {curr_view}")
+
+
                 sequence_output_dir = os.path.join(output_dir, original_dir)
                 os.makedirs(sequence_output_dir, exist_ok=True)
 
-                # Process each CSV file in the directory
                 for csv_file in csv_files:
                     print(f"Processing file: {csv_file}")
-                
+
                     all_pred_files = []
                     for view in views:
-                        curr_dir_name = f"{base_name}_{view}"
+                        # Dynamically replace `curr_view` in `original_dir` instead of reconstructing from `base_name`
+                        if f"Cam-{curr_view}" in original_dir:
+                            curr_dir_name = original_dir.replace(f"Cam-{curr_view}", f"Cam-{view}")
+                        else:
+                            curr_dir_name = original_dir.replace(curr_view, view)
+                        
+                        print(f"curr_dir_name: {curr_dir_name}")
                         for seed_dir in seed_dirs:
                             seed_video_dir = os.path.join(seed_dir, inference_dir)
                             seed_sequence_dir = os.path.join(seed_video_dir, curr_dir_name)
+                            print(f"Checking directory - seed_sequence_dir: {seed_sequence_dir}")
                             if os.path.exists(seed_sequence_dir):
                                 pred_file = os.path.join(seed_sequence_dir, csv_file)
                                 if os.path.exists(pred_file):
                                     all_pred_files.append(pred_file)
-
+                    
+                    
                     if all_pred_files:
                         # Get input_dfs_list and keypoint_names for this file
                         input_dfs_list, keypoint_names = format_data(
@@ -243,6 +267,8 @@ def post_process_ensemble_labels(
                                 result_file = os.path.join(sequence_output_dir, csv_file)
                                 result_df.to_csv(result_file)
                                 print(f"Saved EKS results to {result_file}")
+
+                
                 
             for view in views:   
                 process_final_predictions(
@@ -256,16 +282,30 @@ def post_process_ensemble_labels(
         else:
             for view in views:
                 print(f"\nProcessing view: {view}")
-                # Process only directories for current view
+                
                 view_dirs = {
-                    dir_name: files for dir_name, files in original_structure.items() 
-                    if dir_name.endswith(f'_{view}')
+                    dir_name: files 
+                    for dir_name, files in original_structure.items()
+                    if dir_name.endswith(f"_{view}") or f"Cam-{view}" in dir_name
                 }
+                print(f"view_dirs: {view_dirs}")
                 
                 # Process each view-specific directory
                 for original_dir, csv_files in view_dirs.items():
                     print(f"Processing directory: {original_dir}")
-                    base_name = original_dir.rsplit('_', 1)[0]  # e.g., "180607_004"
+                    
+                    # extract the current view from original dir 
+                    parts = original_dir.split('_')
+                    curr_view = None
+                    for part in parts:
+                        if "Cam-" in part:
+                            curr_view = part.split("-")[-1] # Extract only the view (e.g., "A" from "Cam-A")
+                            break
+                    
+                    if curr_view is None:
+                        curr_view = parts[-1] # Use the last part as the view 
+                    
+                    print(f"Identified view: {curr_view}")
 
                     # Create output directory matching original structure
                     sequence_output_dir = os.path.join(output_dir, original_dir)
@@ -276,7 +316,14 @@ def post_process_ensemble_labels(
                         print(f"Processing file: {csv_file}")
 
                         all_pred_files = []
-                        curr_dir_name = f"{base_name}_{view}"
+                        # **Dynamically update `curr_dir_name` by replacing `curr_view`**
+                        if f"Cam-{curr_view}" in original_dir:
+                            curr_dir_name = original_dir.replace(f"Cam-{curr_view}", f"Cam-{view}")
+                        else:
+                            curr_dir_name = original_dir.replace(curr_view, view)
+
+                        print(f"curr_dir_name: {curr_dir_name}")
+
                         for seed_dir in seed_dirs:
                             seed_video_dir = os.path.join(seed_dir, inference_dir)
                             seed_sequence_dir = os.path.join(seed_video_dir, curr_dir_name)
@@ -293,7 +340,7 @@ def post_process_ensemble_labels(
                             )
 
                             # Process predictions to get column structure
-                            column_structure,_,_,_,_ = process_predictions(all_pred_files[0], None)
+                            column_structure,_,_,_,_ = process_predictions(all_pred_files[0])
 
                             # stack arrays for processing 
                             stacked_arrays = []
@@ -398,26 +445,34 @@ def post_process_ensemble_videos(
             all_pred_files = []
 
             for view_idx, view in enumerate(views):
+                print(f"Processing view: {view}")
                 pred_files_for_view = []
                 for seed_dir in seed_dirs:
                     base_files = os.listdir(os.path.join(seed_dir, inference_dir))
-                    print(f"base_files: {base_files}")
+                    print(f" looking for patterns: 'Cam-{view}' or '{view}.csv'")
                     pred_files = [
                         os.path.join(seed_dir, inference_dir, f)
                         for f in base_files 
-                        if f.endswith('.csv') and (f"{view}_" in f or f.endswith(f"_{view}.csv"))
+                        if f.endswith(f"_{view}.csv") or (f"Cam-{view}" in f and f.endswith('.csv'))
                     ]
+                    print(f"For view {view}, matched files: {pred_files}")
                     pred_files_for_view.extend(pred_files)
 
                 if pred_files_for_view:
-                    print(f"pred_files_for_view: {pred_files_for_view}")
+                    print(f"\nDEBUG - View {view}:")
+                    print(f"Reading file: {pred_files_for_view[0]}")
+
                     sample_df = pd.read_csv(pred_files_for_view[0], header=[0, 1, 2], index_col=0)
                     view_indices[view] = sample_df.index.tolist()
+
+                    print(f"Before extending all_pred_files: {all_pred_files}")
+                    print(f"Adding pred_files_for_view: {pred_files_for_view}")
+                    all_pred_files.extend(pred_files_for_view) # this was ourside of the if statment
+                    
                 
-                all_pred_files.extend(pred_files_for_view)
-                
-            print(f"The views names are {views}")
-            print(f"The type of views names are {type(views)}")
+            print(f"\nDEBUG - Before format_data:")
+            print(f"all_pred_files: {all_pred_files}")
+            print(f"views: {views}")
             
             # Get input_dfs_list and keypoint_names using format_data
             input_dfs_list, keypoint_names = format_data(
@@ -441,8 +496,8 @@ def post_process_ensemble_videos(
                 # Use the same base filename pattern
                 base_files = os.listdir(os.path.join(seed_dirs[0], inference_dir))
                 print(f"base_files: {base_files}")
-                csv_files = [f for f in base_files if f.endswith('.csv') and (f"{view}_" in f or f.endswith(f"_{view}.csv"))]
-                
+                csv_files = [f for f in base_files if f.endswith(f"_{view}.csv") or (f"Cam-{view}" in f and f.endswith('.csv'))]
+                print(f" the csv file is {csv_files}")
                 if csv_files:
                     base_name = csv_files[0]
                     print("base_name is ", base_name)
@@ -463,7 +518,7 @@ def post_process_ensemble_videos(
                     base_files = os.listdir(os.path.join(seed_dir, inference_dir))
                     print(f"base_files: {base_files}")
                     # we need to think about it 
-                    csv_files = [f for f in base_files if f.endswith('.csv') and (f"{view}_" in f or f.endswith(f"_{view}.csv"))]
+                    csv_files = [f for f in base_files if f.endswith(f"_{view}.csv") or (f"Cam-{view}" in f and f.endswith('.csv'))]
                     # assert that the length of csv_files is 1
                     assert len(csv_files) == 1
                     pred_file = os.path.join(seed_dir, inference_dir, csv_files[0])
@@ -478,7 +533,7 @@ def post_process_ensemble_videos(
                 print(f"keypoint_names after format_data are: {keypoint_names}")
                 # # Clean keypoint names by removing unexpected entries
             
-                column_structure,_,_,_,_ = process_predictions(pred_files[0], column_structure)
+                column_structure,_,_,_,_ = process_predictions(pred_files[0])
                 
 
                 for markers_curr_fmt in input_dfs_list:

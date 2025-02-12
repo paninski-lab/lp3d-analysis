@@ -1,6 +1,8 @@
 
 import pandas as pd
 import numpy as np
+import os 
+import re
 import matplotlib.pyplot as plt
 
 
@@ -13,8 +15,125 @@ plot_colors = {
     'ensemble_mean': 'orange',
     'ensemble_variance': 'brown',
     'labels': '#FFD700', #(Bright Gold)
+    'pca_reprojection': 'pink',
     
 }
+
+
+def find_prediction_files(directory, view_name):
+
+    """
+    Find files in a directory that match a specific view name pattern.
+    
+    Args:
+        directory (str): Path to the directory to search in
+        view_name (str): Name of the view to search for (e.g., "Cam-A")
+    
+    Returns:
+        list: List of full file paths that match the criteria
+        
+    The function:
+    1. Only processes files (not directories)
+    2. Looks for the view_name using regex pattern that ensures exact matches
+    3. Excludes files containing 'pixel_error'
+    4. Returns full file paths of matches
+    """
+
+    matching_files = []
+    for filename in os.listdir(directory):
+        filepath = os.path.join(directory, filename)
+        # First check if it's a file (not a directory)
+        if os.path.isfile(filepath):
+            # Use regex to find the view name in the filename
+            pattern = rf"(?<![A-Z]){re.escape(view_name)}(?![A-Z])"
+            if re.search(pattern, filename) and 'pixel_error' not in filename:
+                matching_files.append(filepath)
+    return matching_files
+
+def generate_paths_with_models_and_ensembles(
+    dataset_name, 
+    views, 
+    results_dir,
+    model_type,
+    video_dir,
+    seed_dirs, 
+    ensemble_seed, 
+    ensemble_methods, 
+    n_hand_labels, 
+    camera_prefix,
+    base_path="/teamspace/studios",
+    data_dir="data",
+    studio_dir="this_studio",
+    output_dir="outputs"
+):
+    """
+    Generate paths for ground truth and prediction data with models and ensembles.
+    
+    Args:
+        dataset_name (str): Name of the dataset (e.g., 'fly-anipose')
+        views (list): List of view names (e.g., ['A', 'B', 'C'])
+        seed_dirs (list): List of seed directory names (e.g., ['0', '1', '2'])
+        ensemble_seed (str): Seed for ensemble models
+        ensemble_methods (list): List of ensemble method names
+        n_hand_labels (str): Number of hand labels used
+        camera_prefix (str): Prefix for camera views (e.g., "Cam-")
+        base_path (str): Base path for all data (default: "/teamspace/studios")
+        data_dir (str): Directory containing ground truth data (default: "data")
+        studio_dir (str): Directory for studio-specific data (default: "this_studio")
+        output_dir (str): Directory for model outputs (default: "outputs")
+        
+    Returns:
+        tuple: (ground_truth_csvs, file_paths)
+    """
+    # Generate ground truth paths
+    ground_truth_csvs = {
+        view: os.path.join(base_path, data_dir, dataset_name, f'CollectedData_{view}_new.csv')
+        for view in views
+    }
+    
+    # Generate prediction paths
+    file_paths = {}
+    for view in views:
+        view_data = {}
+        
+        # Add individual model predictions
+        for seed in seed_dirs:
+            base_dir = os.path.join(
+                base_path, 
+                studio_dir, 
+                output_dir,
+                dataset_name,
+                results_dir,
+                f"{model_type}_{n_hand_labels}_{seed}",
+                video_dir
+            )
+            print(base_dir)
+            matching_files = find_prediction_files(base_dir, f'{camera_prefix}{view}')
+            if matching_files:
+                view_data[seed] = matching_files[0]
+        
+        # Add ensemble predictions
+        if ensemble_methods is not None and ensemble_seed is not None:
+            for method in ensemble_methods:
+                base_dir = os.path.join(
+                    base_path,
+                    studio_dir,
+                    output_dir,
+                    dataset_name,
+                    results_dir,
+                    f"{model_type}_{n_hand_labels}_{ensemble_seed}",
+                    method,
+                    video_dir
+                )
+                matching_files = find_prediction_files(base_dir, f'{camera_prefix}{view}')
+                if matching_files:
+                    view_data[method] = matching_files[0]
+        
+        file_paths[view] = view_data
+    
+    return ground_truth_csvs, file_paths
+
+
 
 
 def organize_data_structure(file_paths, views, seed_dirs, ensemble_methods, ensemble_variances, include_pixel_error= False, n_frames=None):

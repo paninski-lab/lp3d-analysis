@@ -16,12 +16,12 @@ data:
     - CollectedData_E.csv
     - CollectedData_F.csv
   view_names:
-    - A
-    - B
-    - C
-    - D
-    - E
-    - F
+    - Cam-A
+    - Cam-B
+    - Cam-C
+    - Cam-D
+    - Cam-E
+    - Cam-F
   # downsample heatmaps - 2 | 3
   downsample_factor: 2
   # total number of keypoints
