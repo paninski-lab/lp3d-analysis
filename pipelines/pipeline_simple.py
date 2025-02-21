@@ -85,6 +85,7 @@ def pipeline(config_file: str):
                             data_dir=data_dir,
                             results_dir=results_dir,
                             overwrite=cfg_pipe.train_networks.overwrite,
+                            # overwrite=True, # always overwrite
                             video_dir='videos-for-each-labeled-frame',
                         )
                 

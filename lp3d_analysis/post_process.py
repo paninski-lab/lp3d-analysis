@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
+
 from typing import Optional, Union
 
 
@@ -14,18 +15,40 @@ from lightning_pose.utils.scripts import (
 
 from eks.singlecam_smoother import ensemble_kalman_smoother_singlecam, fit_eks_singlecam
 from eks.multicam_smoother import ensemble_kalman_smoother_multicam
-from eks.utils import convert_lp_dlc, format_data
+from eks.utils import convert_lp_dlc, format_data, make_dlc_pandas_index
+from eks.core import jax_ensemble
+
+# from lp3d_analysis.pca_global import ensemble_kalman_smoother_multicam2 
+# import pickle 
+
+# pca_model_path = "/teamspace/studios/this_studio/pca_model_anipose.pkl"
+
+# # Custom function to force pickle to find NaNPCA2 in pca_global
+# class CustomUnpickler(pickle.Unpickler):
+#     def find_class(self, module, name):
+#         if name == "NaNPCA2":
+#             from lp3d_analysis.pca_global import NaNPCA2  # Import directly
+#             return NaNPCA2
+#         return super().find_class(module, name)
+
+# # Load PCA object before defining functions
+# try:
+#     with open(pca_model_path, "rb") as f:
+#         pca_object = CustomUnpickler(f).load()
+#     print(f"PCA model loaded successfully from {pca_model_path}.")
+# except AttributeError as e:
+#     print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
 
 
-#TODO
-# 1. Implement post_process_ensemble_multiview
 
-def process_predictions(pred_file: str, include_likelihood = True,  column_structure=None):
+def process_predictions(pred_file: str, include_likelihood = True, include_variance = False, column_structure=None):
     """
     Process predictions from a CSV file and return relevant data structures.
     
     Args:
         pred_file (str): Path to the prediction CSV file
+        include_likelihoos (bool): Whether to include likelihood values in the selected coordinates 
+        include_variance (bool): Whether to include ensemble variances in the selected coordinates
         column_structure: Existing column structure (if any)
         
     Returns:
@@ -40,8 +63,13 @@ def process_predictions(pred_file: str, include_likelihood = True,  column_struc
         
     df = pd.read_csv(pred_file, header=[0, 1, 2], index_col=0)
 
-    # Select column structure: Default includes 'x', 'y', and 'likelihood'
-    selected_coords = ['x', 'y', 'likelihood'] if include_likelihood else ['x', 'y']
+    # Select column structure: Default includes 'x', 'y', and 'likelihood' and I want to load ensemble variances if I can 
+    # selected_coords = ['x', 'y', 'likelihood'] if include_likelihood else ['x', 'y']
+    selected_coords = ['x', 'y'] # check that it works  really 
+    if include_likelihood:
+        selected_coords.append('likelihood')
+    if include_variance:
+        selected_coords.extend(['x_ens_var', 'y_ens_var'])
     
     if column_structure is None:
         column_structure = df.loc[:, df.columns.get_level_values(2).isin(selected_coords)].columns
@@ -190,12 +218,16 @@ def post_process_ensemble_labels(
         for view in views:
             view_dirs = [
                 d for d in os.listdir(video_dir) 
-                if os.path.isdir(os.path.join(video_dir, d)) and 
-                (d.endswith(f'_{view}') or (f'Cam-{view}' in d))
+                if view in d 
             ]
             print(f"view_dirs: {view_dirs}")
             for dir_name in view_dirs:
                 dir_path = os.path.join(video_dir, dir_name)
+                # Ensure dir_path is a directory before listing its contents
+                if not os.path.isdir(dir_path):
+                    print(f"Skipping {dir_path}, as it is not a directory.")
+                    continue  # Skip non-directory files
+
                 print(f"Checking directory: {dir_path}")
                 csv_files = [f for f in os.listdir(dir_path) if f.endswith('.csv')]
                 print(f"Found {len(csv_files)} CSV files in {dir_name}")
@@ -206,21 +238,10 @@ def post_process_ensemble_labels(
             # Process each view-specific directory
             for original_dir, csv_files in original_structure.items():
                 print(f"Processing directory: {original_dir}")
-                parts = original_dir.split("_")
-                print(f"parts: {parts}")
-                curr_view = None
-                for part in parts:
-                    if "Cam-" in part: # Case 1: View is in "Cam-{view}" format
-                        curr_view = part.split("-")[-1] # Extract only the view (e.g., "A" from "Cam-A")
-                        print(f"curr_view: {curr_view}")
-                        break
                 
-                if curr_view is None: # case 2: if no "cam-{view}" in the directory name
-                    curr_view = parts[-1]  # Use the last part as the view
+                curr_view = next((part for part in original_dir.split("_") if part in views), original_dir.split("_")[-1])
 
                 print(f"Identified view (curr_view): {curr_view}")
-
-
                 sequence_output_dir = os.path.join(output_dir, original_dir)
                 os.makedirs(sequence_output_dir, exist_ok=True)
 
@@ -229,12 +250,8 @@ def post_process_ensemble_labels(
 
                     all_pred_files = []
                     for view in views:
-                        # Dynamically replace `curr_view` in `original_dir` instead of reconstructing from `base_name`
-                        if f"Cam-{curr_view}" in original_dir:
-                            curr_dir_name = original_dir.replace(f"Cam-{curr_view}", f"Cam-{view}")
-                        else:
-                            curr_dir_name = original_dir.replace(curr_view, view)
-                        
+                        # Replace `curr_view` with `view` directly (no "Cam-" adjustments needed)
+                        curr_dir_name = original_dir.replace(curr_view, view) if curr_view in original_dir else original_dir
                         print(f"curr_dir_name: {curr_dir_name}")
                         for seed_dir in seed_dirs:
                             seed_video_dir = os.path.join(seed_dir, inference_dir)
@@ -268,7 +285,7 @@ def post_process_ensemble_labels(
                                 result_df.to_csv(result_file)
                                 print(f"Saved EKS results to {result_file}")
 
-                
+               
                 
             for view in views:   
                 process_final_predictions(
@@ -286,7 +303,7 @@ def post_process_ensemble_labels(
                 view_dirs = {
                     dir_name: files 
                     for dir_name, files in original_structure.items()
-                    if dir_name.endswith(f"_{view}") or f"Cam-{view}" in dir_name
+                    if view in dir_name
                 }
                 print(f"view_dirs: {view_dirs}")
                 
@@ -294,16 +311,7 @@ def post_process_ensemble_labels(
                 for original_dir, csv_files in view_dirs.items():
                     print(f"Processing directory: {original_dir}")
                     
-                    # extract the current view from original dir 
-                    parts = original_dir.split('_')
-                    curr_view = None
-                    for part in parts:
-                        if "Cam-" in part:
-                            curr_view = part.split("-")[-1] # Extract only the view (e.g., "A" from "Cam-A")
-                            break
-                    
-                    if curr_view is None:
-                        curr_view = parts[-1] # Use the last part as the view 
+                    curr_view = next((part for part in original_dir.split("_") if part in views), original_dir.split("_")[-1])
                     
                     print(f"Identified view: {curr_view}")
 
@@ -316,12 +324,8 @@ def post_process_ensemble_labels(
                         print(f"Processing file: {csv_file}")
 
                         all_pred_files = []
-                        # **Dynamically update `curr_dir_name` by replacing `curr_view`**
-                        if f"Cam-{curr_view}" in original_dir:
-                            curr_dir_name = original_dir.replace(f"Cam-{curr_view}", f"Cam-{view}")
-                        else:
-                            curr_dir_name = original_dir.replace(curr_view, view)
-
+                        # Directly replace curr_view with view (no need to modify "Cam-")
+                        curr_dir_name = original_dir.replace(curr_view, view) if curr_view in original_dir else original_dir
                         print(f"curr_dir_name: {curr_dir_name}")
 
                         for seed_dir in seed_dirs:
@@ -449,11 +453,10 @@ def post_process_ensemble_videos(
                 pred_files_for_view = []
                 for seed_dir in seed_dirs:
                     base_files = os.listdir(os.path.join(seed_dir, inference_dir))
-                    print(f" looking for patterns: 'Cam-{view}' or '{view}.csv'")
                     pred_files = [
                         os.path.join(seed_dir, inference_dir, f)
                         for f in base_files 
-                        if f.endswith(f"_{view}.csv") or (f"Cam-{view}" in f and f.endswith('.csv'))
+                        if view in f 
                     ]
                     print(f"For view {view}, matched files: {pred_files}")
                     pred_files_for_view.extend(pred_files)
@@ -496,7 +499,7 @@ def post_process_ensemble_videos(
                 # Use the same base filename pattern
                 base_files = os.listdir(os.path.join(seed_dirs[0], inference_dir))
                 print(f"base_files: {base_files}")
-                csv_files = [f for f in base_files if f.endswith(f"_{view}.csv") or (f"Cam-{view}" in f and f.endswith('.csv'))]
+                csv_files = [f for f in base_files if view in f]
                 print(f" the csv file is {csv_files}")
                 if csv_files:
                     base_name = csv_files[0]
@@ -518,7 +521,7 @@ def post_process_ensemble_videos(
                     base_files = os.listdir(os.path.join(seed_dir, inference_dir))
                     print(f"base_files: {base_files}")
                     # we need to think about it 
-                    csv_files = [f for f in base_files if f.endswith(f"_{view}.csv") or (f"Cam-{view}" in f and f.endswith('.csv'))]
+                    csv_files = [f for f in base_files if view in f]
                     # assert that the length of csv_files is 1
                     assert len(csv_files) == 1
                     pred_file = os.path.join(seed_dir, inference_dir, csv_files[0])
@@ -534,6 +537,7 @@ def post_process_ensemble_videos(
                 # # Clean keypoint names by removing unexpected entries
             
                 column_structure,_,_,_,_ = process_predictions(pred_files[0])
+                print(f"column_structure is {column_structure}")
                 
 
                 for markers_curr_fmt in input_dfs_list:
@@ -550,18 +554,58 @@ def post_process_ensemble_videos(
 
                 # Stack all arrays along the third dimension
                 stacked_arrays = np.stack(stacked_arrays, axis=-1)
+                print(f"stacked_arrays shape is {stacked_arrays.shape}")
 
-                # Compute the mean/median along the third dimension
-                if mode == 'ensemble_mean':
-                    aggregated_array = np.nanmean(stacked_arrays, axis=-1)
-                elif mode == 'ensemble_median':
-                    aggregated_array = np.nanmedian(stacked_arrays, axis=-1)
+                if mode == 'ensemble_mean' or mode == 'ensemble_median':
+                    stacked_arrays_reshaped = stacked_arrays.transpose(2, 0, 1)  # (5, 601, 90)
+                    if mode == 'ensemble_mean':
+                        ensemble_preds, ensemble_vars, ensemble_likes = jax_ensemble(
+                        stacked_arrays_reshaped, avg_mode='mean', var_mode='confidence_weighted_var'
+                    )
+                    elif mode == 'ensemble_median':
+                        ensemble_preds, ensemble_vars, ensemble_likes = jax_ensemble(
+                        stacked_arrays_reshaped, avg_mode='median', var_mode='confidence_weighted_var'
+                    )    
+                
+                    # First extend column_structure to include variance columns
+                    current_tuples = list(column_structure)
+                    
+                    # Add variance columns for each bodypart
+                    new_tuples = []
+                    for scorer, bodypart, coord in current_tuples:
+                        new_tuples.append((scorer, bodypart, coord))
+                        if coord == 'likelihood':  # After each likelihood, add the variance columns
+                            new_tuples.append((scorer, bodypart, 'x_ens_var'))
+                            new_tuples.append((scorer, bodypart, 'y_ens_var'))
+                    
+                    # Create new column structure with added variance columns
+                    column_structure = pd.MultiIndex.from_tuples(new_tuples, names=['scorer', 'bodyparts', 'coords'])
+                    
+                    # Create results DataFrame with new structure
+                    results_df = pd.DataFrame(index=df_index, columns=column_structure)
+    
+                    
+                    # Fill in the values for each keypoint
+                    for k, bp in enumerate(keypoint_names):
+                        scorer, bodypart = bp.split('/', 1) if '/' in bp else ('heatmap_tracker', bp)
+                        # Fill coordinates and likelihood
+                        results_df.loc[:, (scorer, bodypart, 'x')] = ensemble_preds[:, k, 0]
+                        results_df.loc[:, (scorer, bodypart, 'y')] = ensemble_preds[:, k, 1]
+                        results_df.loc[:, (scorer, bodypart, 'likelihood')] = ensemble_likes[:, k, 0]
+                        # Add ensemble variances
+                        results_df.loc[:, (scorer, bodypart, 'x_ens_var')] = ensemble_vars[:, k, 0]
+                        results_df.loc[:, (scorer, bodypart, 'y_ens_var')] = ensemble_vars[:, k, 1]
+                     
+                    
+                    aggregated_array = results_df.loc[:, column_structure].to_numpy()
+                    
+
                 elif mode == 'eks_singleview':
                     results_df = run_eks_singleview(
                         markers_list= stacked_dfs,
                         keypoint_names=keypoint_names
                     )
-                    # Dynamically update column structure based on smoothed_df
+                    # Dynamically update column structure based on results_df
                     column_structure = results_df.columns[
                         results_df.columns.get_level_values(2).isin(
                             ['x', 'y', 'likelihood', 'x_ens_median', 'y_ens_median','x_ens_var', 'y_ens_var', 'x_posterior_var', 'y_posterior_var']
@@ -582,7 +626,7 @@ def post_process_ensemble_videos(
                 # Use the same base filename pattern that was found in the input directory
                 base_files = os.listdir(os.path.join(seed_dirs[0], inference_dir))
                 print(f"base_files: {base_files}")
-                csv_files = [f for f in base_files if f.endswith('.csv') and (f"{view}_" in f or f.endswith(f"_{view}.csv"))]
+                csv_files = [f for f in base_files if view in f]
                 print(f"csv_files: {csv_files}")
                 if csv_files:
                     base_name = csv_files[0]
@@ -701,17 +745,39 @@ def run_eks_multiview(
     camera_dfs, smooth_params_final = ensemble_kalman_smoother_multicam(
         markers_list = markers_list_all,
         keypoint_names = keypoint_names,
-        smooth_param = 10,
+        smooth_param = 10000,
         quantile_keep_pca= 50, #quantile_keep_pca
         camera_names = views,
-        s_frames = None,
+        s_frames = [(None,None)], # Keemin wil fix 
         avg_mode = avg_mode,
         var_mode = var_mode,
         inflate_vars = False,
-        inflate_vars_likelihood_thresh = inflate_vars_likelihood_thresh,
-        inflate_vars_v_quantile_thresh = inflate_vars_v_quantile_thresh,
+        inflate_vars_kwargs = {
+            'likelihood_threshold': inflate_vars_likelihood_thresh,
+            'v_quantile_threshold': inflate_vars_v_quantile_thresh,
+        },
         verbose = verbose,
     )
+
+    
+
+    # camera_dfs, smooth_params_final = ensemble_kalman_smoother_multicam2(
+    #     markers_list = markers_list_all,
+    #     keypoint_names = keypoint_names,
+    #     smooth_param = 10000,
+    #     quantile_keep_pca= 50, #quantile_keep_pca
+    #     camera_names = views,
+    #     s_frames = [(None,None)], # Keemin wil fix 
+    #     avg_mode = avg_mode,
+    #     var_mode = var_mode,
+    #     inflate_vars = False,
+    #     inflate_vars_kwargs = {
+    #         'likelihood_threshold': inflate_vars_likelihood_thresh,
+    #         'v_quantile_threshold': inflate_vars_v_quantile_thresh,
+    #     },
+    #     verbose = verbose,
+    #     pca_object = pca_object
+    # )
 
     # Process results for each view
     results_arrays = {}

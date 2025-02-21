@@ -9,12 +9,12 @@ data:
   video_dir: /teamspace/studios/data/fly-anipose/videos
   # location of labels; for example script, this should be relative to `data_dir`
   csv_file:
-    - CollectedData_A.csv
-    - CollectedData_B.csv
-    - CollectedData_C.csv
-    - CollectedData_D.csv
-    - CollectedData_E.csv
-    - CollectedData_F.csv
+    - CollectedData_Cam-A.csv
+    - CollectedData_Cam-B.csv
+    - CollectedData_Cam-C.csv
+    - CollectedData_Cam-D.csv
+    - CollectedData_Cam-E.csv
+    - CollectedData_Cam-F.csv
   view_names:
     - Cam-A
     - Cam-B

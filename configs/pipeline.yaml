@@ -37,8 +37,8 @@ train_networks:
   # run inference on videos in these directories (independent of training videos)
   inference_dirs:
     # - videos_new
-    - videos-for-each-labeled-frame
-    # - videos_debug
+    # - videos-for-each-labeled-frame
+    - videos_debug
 
   # training parameters
   # min_steps: 5000
@@ -56,17 +56,17 @@ train_networks:
 post_processing_labels:
 
   eks_singleview:
-    run: True
-    overwrite: True
+    run: False
+    overwrite: False
   eks_multiview:
     run: False
     overwrite: False
   ensemble_mean:
-    run: True
-    overwrite: True
+    run: False
+    overwrite: False
   ensemble_median:
-    run: True
-    overwrite: True
+    run: False
+    overwrite: False
 
 post_processing_videos:
 
@@ -74,8 +74,8 @@ post_processing_videos:
     run: False
     overwrite: False
   eks_multiview:
-    run: False
-    overwrite: False
+    run: True
+    overwrite: True
   ensemble_mean:
     run: False
     overwrite: False
@@ -99,6 +99,3 @@ visualization:
 
   
 # remember that we will have to run it over view 
-
-  
-  

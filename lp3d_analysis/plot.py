@@ -60,7 +60,6 @@ def generate_paths_with_models_and_ensembles(
     ensemble_seed, 
     ensemble_methods, 
     n_hand_labels, 
-    camera_prefix,
     base_path="/teamspace/studios",
     data_dir="data",
     studio_dir="this_studio",
@@ -108,7 +107,7 @@ def generate_paths_with_models_and_ensembles(
                 video_dir
             )
             print(base_dir)
-            matching_files = find_prediction_files(base_dir, f'{camera_prefix}{view}')
+            matching_files = find_prediction_files(base_dir, view)
             if matching_files:
                 view_data[seed] = matching_files[0]
         
@@ -125,7 +124,7 @@ def generate_paths_with_models_and_ensembles(
                     method,
                     video_dir
                 )
-                matching_files = find_prediction_files(base_dir, f'{camera_prefix}{view}')
+                matching_files = find_prediction_files(base_dir, view)
                 if matching_files:
                     view_data[method] = matching_files[0]
         
@@ -136,7 +135,7 @@ def generate_paths_with_models_and_ensembles(
 
 
 
-def organize_data_structure(file_paths, views, seed_dirs, ensemble_methods, ensemble_variances, include_pixel_error= False, n_frames=None):
+def organize_data_structure(file_paths, views, seed_dirs, ensemble_methods, include_pixel_error= False, n_frames=None):
     
     # Determine frame indices
     if isinstance(n_frames, tuple):
@@ -199,11 +198,19 @@ def organize_data_structure(file_paths, views, seed_dirs, ensemble_methods, ense
             organized_data[view]['y'][method] = df.loc[:, df.columns.get_level_values(2) == 'y'].values
             organized_data[view]['likelihood'][method] = df.loc[:, df.columns.get_level_values(2) == 'likelihood'].values
             # now add the x_posterior_var and y_posterior_var only if this method has this information
-            if 'eks' in method:
+            # Add variances only if columns contain data
+            level_2_cols = df.columns.get_level_values(2)
+            
+            # Ensemble variance
+            if any(col == 'x_ens_var' for col in level_2_cols):
                 organized_data[view]['x_ens_var'][method] = df.loc[:, df.columns.get_level_values(2) == 'x_ens_var'].values
                 organized_data[view]['y_ens_var'][method] = df.loc[:, df.columns.get_level_values(2) == 'y_ens_var'].values
+            
+            # Posterior variance
+            if any(col == 'x_posterior_var' for col in level_2_cols):
                 organized_data[view]['x_posterior_var'][method] = df.loc[:, df.columns.get_level_values(2) == 'x_posterior_var'].values
                 organized_data[view]['y_posterior_var'][method] = df.loc[:, df.columns.get_level_values(2) == 'y_posterior_var'].values
+            
 
                 # Add pixel error if requested
             if include_pixel_error:
@@ -222,8 +229,8 @@ def organize_data_structure(file_paths, views, seed_dirs, ensemble_methods, ense
         # frames = end_frame - start_frame
         # n_keypoints = ensemble_variances.shape[2]  # Number of keypoints
         
-        if ensemble_variances is not None:
-            organized_data[view]['x']['ensemble_variance'] = ensemble_variances[start_frame:end_frame, view_idx, :, 0]  # x variances
-            organized_data[view]['y']['ensemble_variance'] = ensemble_variances[start_frame:end_frame, view_idx, :, 1]  # y variances
+        # if ensemble_variances is not None:
+        #     organized_data[view]['x']['ensemble_variance'] = ensemble_variances[start_frame:end_frame, view_idx, :, 0]  # x variances
+        #     organized_data[view]['y']['ensemble_variance'] = ensemble_variances[start_frame:end_frame, view_idx, :, 1]  # y variances
             
-    return organized_data
+    return organized_data 
