@@ -1,5 +1,8 @@
 import argparse
 import os
+import copy
+
+from omegaconf import OmegaConf
 
 from lp3d_analysis.io import load_cfgs
 from lp3d_analysis.train import train_and_infer
@@ -52,28 +55,11 @@ def pipeline(config_file: str):
                         outputs_dir, cfg_pipe.intermediate_results_dir, 
                         f'{model_type}_{n_hand_labels}_{rng_seed}',
                     )
-                    # update cfg_lp
-                    cfg_lp_copy = cfg_lp.copy()
-                    cfg_lp_copy.training.rng_seed_data_pt = rng_seed
-                    cfg_lp_copy.training.rng_seed_model_pt = rng_seed
-                    cfg_lp_copy.training.train_frames = n_hand_labels
-                    if model_type == 'supervised':
-                        cfg_lp_copy.model.model_type = 'heatmap'
-                        cfg_lp_copy.model.losses_to_use = []
-                    elif model_type == 'context':
-                        cfg_lp_copy.model.model_type = 'heatmap_mhcrnn'
-                        cfg_lp_copy.model.losses_to_use = []
-                    else:
-                        raise ValueError(
-                            f'{model_type} is not a valid model type in pipeline cfg; must choose'
-                            f'from {VALID_MODEL_TYPES} or add a new model type'
-                        )
-                    # Main function call 
+                    cfg_lp_copy = make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_seed)
+                    # Main function call
                     train_and_infer(
-                        cfg_pipe=cfg_pipe.copy(),
                         cfg_lp=cfg_lp_copy,
-                        data_dir=data_dir,
-                        results_dir=results_dir,
+                        model_dir=results_dir,
                         inference_dirs=cfg_pipe.train_networks.inference_dirs,
                         overwrite=cfg_pipe.train_networks.overwrite,
                     )
@@ -88,8 +74,7 @@ def pipeline(config_file: str):
                             # overwrite=True, # always overwrite
                             video_dir='videos-for-each-labeled-frame',
                         )
-                
-    
+
     for mode, mode_config in cfg_pipe.post_processing_videos.items():
         for model_type in cfg_pipe.train_networks.model_types:
             for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
@@ -124,8 +109,6 @@ def pipeline(config_file: str):
                         overwrite=mode_config.overwrite,
                     )
 
-
-
                 # for mode, mode_config in cfg_pipe.post_processing.items():
                 #     if mode_config.run: # if the mode is mean or median or eks_singleview 
                 #         #print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}"
@@ -140,9 +123,73 @@ def pipeline(config_file: str):
                 #             inference_dirs=cfg_pipe.train_networks.inference_dirs,
                 #             overwrite=mode_config.overwrite,
                 #         )
-                    
+       
 
-
+def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_seed):
+    # update cfg_lp
+    cfg_overrides = [{
+        "data": {
+            "data_dir": data_dir,
+        },
+        "training": {
+            "rng_seed_data_pt": rng_seed,
+            "rng_seed_model_pt": rng_seed,
+            "train_frames": n_hand_labels,
+        }
+    }]
+    if model_type == 'supervised':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap",
+                "losses_to_use": [],
+            },
+        })
+    elif model_type == 'context':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_mhcrnn",
+                "losses_to_use": [],
+            },
+        })
+    else:
+        raise ValueError(
+            f'{model_type} is not a valid model type in pipeline cfg; must choose'
+            f'from {VALID_MODEL_TYPES} or add a new model type'
+        )
+    # Parse params from config
+    min_steps = cfg_pipe.train_networks.min_steps
+    max_steps = cfg_pipe.train_networks.max_steps
+    milestone_steps = cfg_pipe.train_networks.milestone_steps
+    unfreezing_step = cfg_pipe.train_networks.unfreezing_step
+    val_check_interval = cfg_pipe.train_networks.val_check_interval
+    cfg_overrides.append({
+        "training": {
+            "min_steps": min_steps,
+            "max_steps": max_steps,
+            "min_epochs": None,
+            "max_epochs": None,
+            "val_check_interval": val_check_interval,
+            "check_val_every_n_epoch": None,
+            "unfreezing_step": unfreezing_step,
+            "unfreezing_epoch": None,
+            "lr_scheduler_params": {
+                "multisteplr": {
+                    "milestone_steps": milestone_steps,
+                    "milestones": None,
+                }
+            },
+        },
+        "eval": {
+            "predict_vids_after_training": False,
+        }
+    })
+    cfg_lp_copy = OmegaConf.merge(cfg_lp, *cfg_overrides)
+    del cfg_lp_copy.training.min_epochs
+    del cfg_lp_copy.training.max_epochs
+    del cfg_lp_copy.training.check_val_every_n_epoch
+    del cfg_lp_copy.training.unfreezing_epoch
+    del cfg_lp_copy.training.lr_scheduler_params.multisteplr.milestones
+    return cfg_lp_copy
 
 
 if __name__ == "__main__":
