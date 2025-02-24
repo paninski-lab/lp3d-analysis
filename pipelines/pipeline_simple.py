@@ -67,11 +67,10 @@ def pipeline(config_file: str):
                     if 'videos-for-each-labeled-frame' in cfg_pipe.train_networks.inference_dirs:
                         # Clean up/reorganize OOD data
                         extract_ood_frame_predictions(
-                            cfg_lp=cfg_lp_copy.copy(), # the reason is that if I don't do that on rng 0  I will run train and infer on the in distribution data and then I come to this function if I don't do that in that function, I will train on incorrect data because it will change configrations file 
+                            cfg_lp=cfg_lp_copy,
                             data_dir=data_dir,
                             results_dir=results_dir,
                             overwrite=cfg_pipe.train_networks.overwrite,
-                            # overwrite=True, # always overwrite -- why always overwrites?
                             video_dir='videos-for-each-labeled-frame',
                         )
 

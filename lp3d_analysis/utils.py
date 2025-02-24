@@ -1,10 +1,9 @@
-import os 
+import copy
+import os
 import numpy as np
 import pandas as pd
 
-from lightning_pose.utils.scripts import (
-    compute_metrics,
-)
+from lightning_pose.utils.scripts import compute_metrics_single
 
 from omegaconf import DictConfig
 
@@ -12,8 +11,6 @@ from omegaconf import DictConfig
 #TODO 
 # 1. need to make a decision about the naming of the output file and how to access the correct model name because it is not part of the results_dir 
 # 2. change names of variables so will look better in the code and make more sense 
-# 3. should I use cfg_lp_copy?
-#4 I need to make sure that I don't make modification to the original config file 
 
 def extract_ood_frame_predictions(
     cfg_lp: DictConfig,
@@ -22,10 +19,8 @@ def extract_ood_frame_predictions(
     overwrite: bool,
     video_dir: str,
 ) -> None:
-    
-    new_csv_files = [f for f in os.listdir(data_dir) if f.endswith('_new.csv')]   
-    # Use cfg_lp instead of cfg_lp_copy
-    #cfg_lp.data.csv_file = new_csv_files it was not here but maybe it should be here?
+
+    new_csv_files = [f for f in os.listdir(data_dir) if f.endswith('_new.csv')]
 
     for csv_file in new_csv_files:
         # load original csv 
@@ -78,11 +73,17 @@ def extract_ood_frame_predictions(
             print(f'Saved predictions to {preds_file}')
 
             # make sure I don't make any changes to the original cfg_lp
-            cfg_lp.data.csv_file = csv_file
-            print(f"the cfg_lp is {cfg_lp}")
+            cfg_lp_copy = copy.deepcopy(cfg_lp)
+            cfg_lp_copy.data.csv_file = csv_file
+            print(f"the cfg_lp_copy is {cfg_lp_copy}")
         
             try:
-                compute_metrics(cfg=cfg_lp, preds_file=preds_file, data_module=None)
+                compute_metrics_single(
+                    cfg=cfg_lp_copy,
+                    labels_file = csv_file,
+                    preds_file=preds_file,
+                    data_module=None
+                )
                 print(f"Succesfully computed metrics for {preds_file}")
             except Exception as e:
                 print(f"Error computing metrics\n{e}")
