@@ -65,16 +65,18 @@ def train_and_infer(
                     video_files += [os.path.join(sub_video_dir, f) for f in sub_files]
 
             for video_file in video_files:
-                if (model.video_preds_dir() / Path(video_file).name).exists() and not overwrite:
+                # Set output_dir such that it preserves directory structure of videos dir:
+                # when video_file == bar.mp4 then output_dir == model_dir / video_dir
+                # when video_file == foo/bar.mp4 then output_dir == model_dir / video_dir / foo
+                output_dir = (model.model_dir / video_dir / video_file).parent
+                inference_csv_file = (output_dir / Path(video_file).with_suffix(".csv").name)
+                if inference_csv_file.exists() and not overwrite:
                     print(f"Skipping inference for {video_file}, Inference file already exists.")
                     continue
 
                 model.predict_on_video_file(
                     video_file=os.path.join(video_path, video_file),
-                    # two cases:
-                    # when video_file == bar.mp4 then output_dir == model_dir / video_dir
-                    # when video_file == foo/bar.mp4 then output_dir == model_dir / video_dir / foo
-                    output_dir=(model.model_dir / video_dir / video_file).parent,
+                    output_dir=output_dir,
                     compute_metrics=False,
                 )
     else:
