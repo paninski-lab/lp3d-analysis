@@ -587,7 +587,11 @@ def post_process_ensemble_videos(
                     
                     # Fill in the values for each keypoint
                     for k, bp in enumerate(keypoint_names):
-                        scorer, bodypart = bp.split('/', 1) if '/' in bp else ('heatmap_tracker', bp)
+                        
+                        # Use scorer from column_structure if not in bp; assume first scorer applies
+                        scorer = bp.split('/', 1)[0] if '/' in bp else column_structure.levels[0][0]
+                        bodypart = bp.split('/', 1)[1] if '/' in bp else bp
+
                         # Fill coordinates and likelihood
                         results_df.loc[:, (scorer, bodypart, 'x')] = ensemble_preds[:, k, 0]
                         results_df.loc[:, (scorer, bodypart, 'y')] = ensemble_preds[:, k, 1]

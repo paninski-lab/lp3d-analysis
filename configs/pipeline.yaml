@@ -32,8 +32,8 @@ train_networks:
     - 100
   # model type
   model_types:
-    - supervised
-    # - context
+    # - supervised
+    - context
   # run inference on videos in these directories (independent of training videos)
   inference_dirs:
     # - videos_new
@@ -72,24 +72,24 @@ post_processing_labels:
 post_processing_videos:
 
   eks_singleview:
-    run: False
-    overwrite: False
+    run: True
+    overwrite: True
   eks_multiview:
     run: True
     overwrite: True
   ensemble_mean:
-    run: False
-    overwrite: False
+    run: True
+    overwrite: True
   ensemble_median:
-    run: False
-    overwrite: False
+    run: True
+    overwrite: True
 
 
 
 # visualization options
 visualization:
   run: False
-  overwrite: False
+  overwrite: False 
   ens_var_plots: False
   pixel_error_ens_std_plots:
     run: False 

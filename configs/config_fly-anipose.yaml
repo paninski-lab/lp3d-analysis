@@ -104,11 +104,11 @@ training:
   # dlc-top-down- dlc augmentations plus vertical and horizontal flips
   imgaug: dlc
   # batch size of labeled data during training
-  train_batch_size: 8
+  train_batch_size: 4
   # batch size of labeled data during validation
-  val_batch_size: 48
+  val_batch_size: 16
   # batch size of labeled data during test
-  test_batch_size: 48
+  test_batch_size: 16
   # fraction of labeled data used for training
   train_prob: 0.95
   # fraction of labeled data used for validation (remaining used for test)
