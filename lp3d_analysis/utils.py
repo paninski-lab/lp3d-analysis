@@ -1,4 +1,3 @@
-import copy
 import os
 import numpy as np
 import pandas as pd
@@ -72,15 +71,11 @@ def extract_ood_frame_predictions(
             results_df.to_csv(preds_file)
             print(f'Saved predictions to {preds_file}')
 
-            # make sure I don't make any changes to the original cfg_lp
-            cfg_lp_copy = copy.deepcopy(cfg_lp)
-            cfg_lp_copy.data.csv_file = csv_file
-            print(f"the cfg_lp_copy is {cfg_lp_copy}")
         
             try:
                 compute_metrics_single(
-                    cfg=cfg_lp_copy,
-                    labels_file = csv_file,
+                    cfg=cfg_lp,
+                    labels_file=os.path.join(cfg_lp.data.data_dir, csv_file),
                     preds_file=preds_file,
                     data_module=None
                 )
