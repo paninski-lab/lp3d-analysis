@@ -71,7 +71,10 @@ def train_and_infer(
 
                 model.predict_on_video_file(
                     video_file=os.path.join(video_path, video_file),
-                    output_dir=os.path.join(model.model_dir, video_dir),
+                    # two cases:
+                    # when video_file == bar.mp4 then output_dir == model_dir / video_dir
+                    # when video_file == foo/bar.mp4 then output_dir == model_dir / video_dir / foo
+                    output_dir=(model.model_dir / video_dir / video_file).parent,
                     compute_metrics=False,
                 )
     else:
