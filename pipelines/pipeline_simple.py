@@ -23,7 +23,7 @@ VALID_MODEL_TYPES = [
 ]
 
 
-def pipeline(config_file: str):
+def pipeline(config_file: str, for_seed: int | None = None) -> None:
 
     # -------------------------------------------
     # Setup
@@ -46,6 +46,8 @@ def pipeline(config_file: str):
         for model_type in cfg_pipe.train_networks.model_types:
             for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
                 for rng_seed in cfg_pipe.train_networks.ensemble_seeds:
+                    if for_seed is not None and for_seed != rng_seed:
+                        continue
                     print(
                         f'fitting {model_type} model (rng_seed={rng_seed}) with {n_hand_labels}' 
                         f'hand labels'
@@ -73,6 +75,10 @@ def pipeline(config_file: str):
                             overwrite=cfg_pipe.train_networks.overwrite,
                             video_dir='videos-for-each-labeled-frame',
                         )
+
+    # The rest of the pipeline only runs when you run without --for_seed.
+    if for_seed is not None:
+        return
 
     for mode, mode_config in cfg_pipe.post_processing_videos.items():
         for model_type in cfg_pipe.train_networks.model_types:
@@ -208,6 +214,11 @@ if __name__ == "__main__":
         help='absolute path to .yaml configuration file',
         type=str,
     )
+    parser.add_argument(
+        '--for_seed',
+        help='only run a specific seed (useful for distributing training on lightning jobs)',
+        type=int,
+    )
     args = parser.parse_args()
 
-    pipeline(args.config)
+    pipeline(args.config, args.for_seed)
