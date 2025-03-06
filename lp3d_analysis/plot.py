@@ -85,11 +85,22 @@ def generate_paths_with_models_and_ensembles(
         tuple: (ground_truth_csvs, file_paths)
     """
     # Generate ground truth paths
-    ground_truth_csvs = {
-        view: os.path.join(base_path, data_dir, dataset_name, f'CollectedData_{view}_new.csv')
+    # ground_truth_csvs = {
+    #     view: os.path.join(base_path, data_dir, dataset_name, f'CollectedData_{view}_new.csv') 
+    #     for view in views
+    # }
+
+    In_Dist_paths = {
+        view: os.path.join(base_path, data_dir, dataset_name, f'CollectedData_{view}.csv') 
         for view in views
     }
-    
+
+    Out_Dist_paths = {
+        view: os.path.join(base_path, data_dir, dataset_name, f'CollectedData_{view}_new.csv') 
+        for view in views
+    }
+
+
     # Generate prediction paths
     file_paths = {}
     for view in views:
@@ -130,7 +141,7 @@ def generate_paths_with_models_and_ensembles(
         
         file_paths[view] = view_data
     
-    return ground_truth_csvs, file_paths
+    return In_Dist_paths, Out_Dist_paths, file_paths
 
 
 

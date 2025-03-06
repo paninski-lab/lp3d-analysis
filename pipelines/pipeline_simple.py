@@ -150,6 +150,14 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
                 "losses_to_use": [],
             },
         })
+    elif model_type == 'semisupervised':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap",
+                "losses_to_use": ["pca_multiview"],
+            },
+        })
+    
     else:
         raise ValueError(
             f'{model_type} is not a valid model type in pipeline cfg; must choose'
