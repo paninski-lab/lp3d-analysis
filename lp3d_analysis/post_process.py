@@ -233,6 +233,8 @@ def get_original_structure(
             csv_files = [f for f in os.listdir(dir_path) if f.endswith('.csv')]
             print(f"Found {len(csv_files)} CSV files in {dir_name}")
             original_structure[dir_name] = csv_files
+        
+        break
             
     return original_structure
 
@@ -399,6 +401,15 @@ def process_multiview_directory(
     sequence_output_dir = os.path.join(output_dir, original_dir)
     os.makedirs(sequence_output_dir, exist_ok=True)
     
+    # Create output directories for ALL views in advance
+    for view in views:
+        # Replace curr_view with each view to get view-specific directory names
+        view_dir_name = original_dir.replace(curr_view, view)
+        view_output_dir = os.path.join(output_dir, view_dir_name)
+        os.makedirs(view_output_dir, exist_ok=True)
+        print(f"Created output directory for {view}: {view_output_dir}")
+
+
     # Prepare FA parameters for inflation
     inflate_vars_kwargs = {}
     if fa_object is not None:
@@ -407,9 +418,10 @@ def process_multiview_directory(
             loading_matrix = fa_object.components_.T  # Typically the loading matrix is the transpose of components_
             mean = fa_object.mean_
             
+            
             inflate_vars_kwargs = {
                 'loading_matrix': loading_matrix,
-                'mean': mean
+                'mean': np.zeros_like(mean)  # we had an issue of centering twice 
             }
             print("Successfully extracted FA parameters for variance inflation")
         except AttributeError as e:
@@ -453,10 +465,19 @@ def process_multiview_directory(
             
             # Save results using original filename (only for current view)
             for view, result_df in results_dfs.items():
-                if view == curr_view:
-                    result_file = os.path.join(sequence_output_dir, csv_file)
-                    result_df.to_csv(result_file)
-                    print(f"Saved EKS results to {result_file}")
+                # if view == curr_view:
+                # Create the view-specific output path
+                view_dir_name = original_dir.replace(curr_view, view)
+                view_output_dir = os.path.join(output_dir, view_dir_name)
+                
+                # Save to the view-specific directory
+                result_file = os.path.join(view_output_dir, csv_file)
+                result_df.to_csv(result_file)
+                print(f"Saved EKS results for view {view} to {result_file}")
+                # result_file = os.path.join(sequence_output_dir, csv_file)
+                # result_file = result_file.replace(curr_view, view)
+                # result_df.to_csv(result_file)
+                # print(f"Saved EKS results to {result_file}")
 
 
 def process_singleview_directory(
@@ -904,7 +925,7 @@ def run_eks_multiview(
     camera_dfs, smooth_params_final = ensemble_kalman_smoother_multicam(
         marker_array = marker_array,
         keypoint_names = keypoint_names,
-        smooth_param = 10000,
+        smooth_param = None,
         quantile_keep_pca= quantile_keep_pca, #quantile_keep_pca
         camera_names = views,
         s_frames = [(None,None)], # Keemin wil fix 

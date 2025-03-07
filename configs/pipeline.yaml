@@ -10,7 +10,7 @@ pipeline_seeds: 0
 
 outputs_dir: /teamspace/studios/this_studio/outputs/${dataset_name}
 
-intermediate_results_dir: results_100_5k
+intermediate_results_dir: results_100_5k_new
 
 # initial training of an ensemble of networks
 train_networks:
