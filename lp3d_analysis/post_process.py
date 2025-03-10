@@ -3,13 +3,13 @@ import pandas as pd
 import numpy as np
 import pickle 
 
-from typing import Optional, Union
-
+from typing import Optional, Union, Callable
 
 from omegaconf import DictConfig
 from typing import List, Literal, Tuple, Dict, Any 
 from pathlib import Path
 
+from lightning_pose.utils.cropzoom import generate_cropped_csv_file
 from lightning_pose.utils.scripts import (
     compute_metrics,
 )
@@ -49,6 +49,9 @@ try:
     print(f"PCA model loaded successfully from {pca_model_path}.")
 except AttributeError as e:
     print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
+except FileNotFoundError as e:
+    print(f"Skipping loading pca_object from {pca_model_path}:")
+    print(e)
 
 try:
     with open(fa_model_path, "rb") as f:
@@ -56,6 +59,9 @@ try:
     print(f"PCA model loaded successfully from {fa_model_path}. for the purpose of variance inflation.")
 except AttributeError as e:
     print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
+except FileNotFoundError as e:
+    print(f"Skipping loading pca_object from {pca_model_path}:")
+    print(e)
 
 # # Load FA object before defining functions
 # try:
@@ -239,7 +245,11 @@ def get_original_structure(
                 continue
 
             print(f"Checking directory: {dir_path}")
-            csv_files = [f for f in os.listdir(dir_path) if f.endswith('.csv')]
+            csv_files = [
+                f
+                for f in os.listdir(dir_path)
+                if f.endswith(".csv") and not f.endswith("_uncropped.csv")
+            ]
             print(f"Found {len(csv_files)} CSV files in {dir_name}")
             original_structure[dir_name] = csv_files
         
@@ -395,7 +405,8 @@ def process_multiview_directory(
     output_dir: str,
     mode: str,
     pca_object = None,
-    fa_object = None
+    fa_object = None,
+    get_bbox_path_fn: Callable[[Path, ], Path] | None = None,
 ) -> None:
     """Process a multiview directory for EKS multiview mode"""
 
@@ -440,26 +451,58 @@ def process_multiview_directory(
     # Process each CSV file only once
     for csv_file in csv_files:
         print(f"Processing file: {csv_file}")
-        
+
         all_pred_files = []
         # Collect prediction files for all views
         for view in views:
             # Create view-specific directory name
             view_dir_name = original_dir.replace(curr_view, view)
-            
+
             for seed_dir in seed_dirs:
                 seed_video_dir = os.path.join(seed_dir, inference_dir)
                 seed_sequence_dir = os.path.join(seed_video_dir, view_dir_name)
-                
+
                 if os.path.exists(seed_sequence_dir):
                     pred_file = os.path.join(seed_sequence_dir, csv_file)
                     if os.path.exists(pred_file):
                         all_pred_files.append(pred_file)
-        
+
         if all_pred_files:
+
+            def _prepare_multiview_eks_uncropped_predictions(all_pred_files: list[str]):
+                # Check if a bbox file exists
+                # has_checked_bbox_file caches the file check
+                has_checked_bbox_file = False
+                all_pred_files_uncropped = []
+                for p in all_pred_files:
+                    p = Path(p)
+                    # p is the absolute path to the prediction file.
+                    # The bbox path has the same relative directory structure but rooted in the data directory
+                    # and suffixed by _bbox.csv.
+                    bbox_path = get_bbox_path_fn(p)
+
+                    if not has_checked_bbox_file:
+                        if not bbox_path.is_file():
+                            return None
+                        has_checked_bbox_file = True
+
+                    # If there's a bbox_file, remap to original space by adding bbox df to preds df.
+                    # Save as _uncropped.csv version of preds_file.
+                    remapped_p = p.with_stem(p.stem + "_uncropped")
+                    all_pred_files_uncropped.append(str(remapped_p))
+                    generate_cropped_csv_file(p, bbox_path, remapped_p, mode="add")
+
+                return all_pred_files_uncropped
+
+            # Not None when there's bbox files in the dataset, i.e. chickadee-crop.
+            all_pred_files_uncropped = (
+                _prepare_multiview_eks_uncropped_predictions(all_pred_files)
+                if get_bbox_path_fn is not None
+                else None
+            )
             # Get input data and run EKS - only once per CSV file, not per view
             input_dfs_list, keypoint_names = format_data(
-                input_source=all_pred_files,
+                input_source=all_pred_files_uncropped or all_pred_files,
                 camera_names=views,
             )
 
@@ -478,11 +521,23 @@ def process_multiview_directory(
             for view, result_df in results_dfs.items():
                 # Create the view-specific directory name and output path
                 view_dir_name = original_dir.replace(curr_view, view)
-                view_output_dir = os.path.join(output_dir, view_dir_name)
+                view_output_dir = Path(output_dir) / view_dir_name
                 
                 # Save to the view-specific directory
-                result_file = os.path.join(view_output_dir, csv_file)
-                result_df.to_csv(result_file)
+                result_file = view_output_dir / csv_file
+                # If cropped dataset, save to a _uncropped file, so that we can later undo the remapping.
+                if all_pred_files_uncropped is not None:
+                    uncropped_result_file = result_file.with_stem(result_file.stem + "_uncropped")
+                else:
+                    uncropped_result_file = None
+
+                result_df.to_csv(uncropped_result_file or result_file)
+
+                # Crop the multiview-eks output back to original cropped coordinate space.
+                if all_pred_files_uncropped is not None:
+                    bbox_path = get_bbox_path_fn(result_file)
+                    generate_cropped_csv_file(uncropped_result_file, bbox_path, result_file, mode="subtract")
+
                 print(f"Saved EKS results for view {view} to {result_file}")
 
 
@@ -698,13 +753,24 @@ def post_process_ensemble_labels(
                 csv_files = original_structure[first_dir]
                 
                 print(f"Processing sequence: {sequence_key} with {len(csv_files)} CSV files")
-                
+
+                def _get_bbox_path(p: Path) -> Path:
+                    """Given some preds file p, it will return the bbox path."""
+                    n_levels_up = len(p.parent.parts) - len(Path(results_dir).parts)
+                    if "eks_multiview" in p.parts:
+                        n_levels_up -= 1
+                    p_minus_model_dir = Path(p).relative_to(p.parents[n_levels_up])
+                    p_rooted_at_data_dir = Path(cfg_lp.data.data_dir) / p_minus_model_dir
+                    bbox_path = p_rooted_at_data_dir.with_stem(p.stem + "_bbox")
+                    return bbox_path
+
                 # Process this sequence only once
                 process_multiview_directory(
                     first_dir, csv_files, first_view, views, 
                     seed_dirs, inference_dir, output_dir, mode,
                     pca_object=pca_object,
-                    fa_object=fa_object
+                    fa_object=fa_object,
+                    get_bbox_path_fn=_get_bbox_path
                 )
             
             # Process final predictions for all views

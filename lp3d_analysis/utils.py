@@ -53,7 +53,7 @@ def extract_ood_frame_predictions(
                 snippet_df = pd.read_csv(snippet_file, header=[0,1,2], index_col=0)
 
                 # extract center frame 
-                assert snippet_df.shape[0] & 2 != 0 # ensure odd number of frames 
+                assert snippet_df.shape[0] % 2 != 0 # ensure odd number of frames
                 idx_frame = int(np.floor(snippet_df.shape[0] / 2))
                 
                 # create results with original image path as index 
