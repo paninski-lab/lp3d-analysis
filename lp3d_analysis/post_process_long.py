@@ -26,21 +26,21 @@ import pickle
 
 pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_fly.pkl"
 
-# # Custom function to force pickle to find NaNPCA2 in pca_global
-# class CustomUnpickler(pickle.Unpickler):
-#     def find_class(self, module, name):
-#         if name == "NaNPCA":
-#             from lightning_pose.utils.pca import  NaNPCA
-#             return NaNPCA
-#         return super().find_class(module, name)
+# Custom function to force pickle to find NaNPCA2 in pca_global
+class CustomUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        if name == "NaNPCA":
+            from lightning_pose.utils.pca import  NaNPCA
+            return NaNPCA
+        return super().find_class(module, name)
 
-# # Load PCA object before defining functions
-# try:
-#     with open(pca_model_path, "rb") as f:
-#         pca_object = CustomUnpickler(f).load()
-#     print(f"PCA model loaded successfully from {pca_model_path}.")
-# except AttributeError as e:
-#     print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
+# Load PCA object before defining functions
+try:
+    with open(pca_model_path, "rb") as f:
+        pca_object = CustomUnpickler(f).load()
+    print(f"PCA model loaded successfully from {pca_model_path}.")
+except AttributeError as e:
+    print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
 
 
 

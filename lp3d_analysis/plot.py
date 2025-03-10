@@ -16,6 +16,8 @@ plot_colors = {
     'ensemble_variance': 'brown',
     'labels': '#FFD700', #(Bright Gold)
     'pca_reprojection': 'pink',
+    'eks_multiview_smooth':  '#FFD700',
+    'eks_multiview_varinf_smooth': 'brown', 
     
 }
 

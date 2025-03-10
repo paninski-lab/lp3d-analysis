@@ -26,10 +26,8 @@ from eks.marker_array import MarkerArray, input_dfs_to_markerArray
 This is loading the pca and FA objects - we will probably not use it like that later 
 '''
 
-# pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_fly.pkl"
-pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_mirror-mouse-separate.pkl"
-# fa_model_path = "/teamspace/studios/this_studio/fa_object_inD_fly.pkl"
-fa_model_path = "/teamspace/studios/this_studio/pca_object_inD_mirror-mouse-separate.pkl"
+pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_fly.pkl"
+fa_model_path = "/teamspace/studios/this_studio/fa_object_inD_fly.pkl"
 
 # Custom function to force pickle to find NaNPCA2 in pca_global
 class CustomUnpickler(pickle.Unpickler):
@@ -50,20 +48,13 @@ try:
 except AttributeError as e:
     print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
 
+# Load FA object before defining functions
 try:
     with open(fa_model_path, "rb") as f:
         fa_object = CustomUnpickler(f).load()
-    print(f"PCA model loaded successfully from {fa_model_path}. for the purpose of variance inflation.")
+    print(f"FA model loaded successfully from {fa_model_path}.")
 except AttributeError as e:
-    print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
-
-# # Load FA object before defining functions
-# try:
-#     with open(fa_model_path, "rb") as f:
-#         fa_object = CustomUnpickler(f).load()
-#     print(f"FA model loaded successfully from {fa_model_path}.")
-# except AttributeError as e:
-#     print(f"Error loading FA model: {e}. Ensure EnhancedFactorAnalysis is correctly imported from pca_global.py.")
+    print(f"Error loading FA model: {e}. Ensure EnhancedFactorAnalysis is correctly imported from pca_global.py.")
 
 
 
@@ -218,6 +209,34 @@ def setup_ensemble_dirs(
     
     return ensemble_dir, seed_dirs, output_dir
 
+# def get_original_structure(
+#     first_seed_dir: str, 
+#     inference_dir: str, 
+#     views: List[str],
+# ) -> Dict[str, List[str]]:
+#     """Create a mapping of original directories and their files"""
+#     video_dir = os.path.join(first_seed_dir, inference_dir)
+#     original_structure = {}
+    
+#     for view in views:
+#         view_dirs = [d for d in os.listdir(video_dir) if view in d]
+#         print(f"view_dirs: {view_dirs}")
+        
+#         for dir_name in view_dirs:
+#             dir_path = os.path.join(video_dir, dir_name)
+#             # Ensure dir_path is a directory before listing its contents
+#             if not os.path.isdir(dir_path):
+#                 print(f"Skipping {dir_path}, as it is not a directory.")
+#                 continue
+
+#             print(f"Checking directory: {dir_path}")
+#             csv_files = [f for f in os.listdir(dir_path) if f.endswith('.csv')]
+#             print(f"Found {len(csv_files)} CSV files in {dir_name}")
+#             original_structure[dir_name] = csv_files
+        
+#         break
+            
+#     return original_structure
 def get_original_structure(
     first_seed_dir: str, 
     inference_dir: str, 
@@ -227,23 +246,31 @@ def get_original_structure(
     video_dir = os.path.join(first_seed_dir, inference_dir)
     original_structure = {}
     
-    for view in views:
-        view_dirs = [d for d in os.listdir(video_dir) if view in d]
-        print(f"View {view} dirs: {view_dirs}")
-        
-        for dir_name in view_dirs:
-            dir_path = os.path.join(video_dir, dir_name)
-            # Ensure dir_path is a directory before listing its contents
-            if not os.path.isdir(dir_path):
-                print(f"Skipping {dir_path}, as it is not a directory.")
-                continue
-
-            print(f"Checking directory: {dir_path}")
-            csv_files = [f for f in os.listdir(dir_path) if f.endswith('.csv')]
-            print(f"Found {len(csv_files)} CSV files in {dir_name}")
-            original_structure[dir_name] = csv_files
-        
+    # First pass: collect all directories that contain view names
+    all_dirs = os.listdir(video_dir)
+    view_specific_dirs = []
+    
+    for dir_name in all_dirs:
+        dir_path = os.path.join(video_dir, dir_name)
+        if not os.path.isdir(dir_path):
+            continue
             
+        # Check if this directory contains any view name
+        contains_view = any(view in dir_name for view in views)
+        if contains_view:
+            view_specific_dirs.append(dir_name)
+    
+    print(f"Found {len(view_specific_dirs)} view-specific directories: {view_specific_dirs}")
+    
+    # Process all view-specific directories directly
+    for dir_name in view_specific_dirs:
+        dir_path = os.path.join(video_dir, dir_name)
+        csv_files = [f for f in os.listdir(dir_path) if f.endswith('.csv')]
+        
+        if csv_files:
+            original_structure[dir_name] = csv_files
+            print(f"Added {dir_name} with {len(csv_files)} CSV files to structure")
+    
     return original_structure
 
 
@@ -384,7 +411,109 @@ def fill_ensemble_results(
         results_df.loc[:, (scorer, bodypart, 'y_ens_var')] = ensemble_vars[:, k, 1]
 
 
-# Modified process_multiview_directory function to handle results for all views properly
+# def process_multiview_directory(
+#     original_dir: str,
+#     csv_files: List[str],
+#     curr_view: str,
+#     views: List[str],
+#     seed_dirs: List[str],
+#     inference_dir: str,
+#     output_dir: str,
+#     mode: str,
+#     pca_object = None,
+#     fa_object = None
+# ) -> None:
+#     """Process a multiview directory for EKS multiview mode"""
+
+#     # Get the global FA object if none is provided
+#     if fa_object is None:
+#         fa_object = globals().get('fa_object')
+#         if fa_object is not None:
+#             print("Using global FA object for multiview processing")
+#         else:
+#             print("Warning: No FA object available for variance inflation")
+
+#     sequence_output_dir = os.path.join(output_dir, original_dir)
+#     os.makedirs(sequence_output_dir, exist_ok=True)
+    
+#     # Create output directories for ALL views in advance
+#     for view in views:
+#         # Replace curr_view with each view to get view-specific directory names
+#         view_dir_name = original_dir.replace(curr_view, view)
+#         view_output_dir = os.path.join(output_dir, view_dir_name)
+#         os.makedirs(view_output_dir, exist_ok=True)
+#         print(f"Created output directory for {view}: {view_output_dir}")
+
+
+#     # Prepare FA parameters for inflation
+#     inflate_vars_kwargs = {}
+#     if fa_object is not None:
+#         # Extract loading matrix and mean from the FA object
+#         try:
+#             loading_matrix = fa_object.components_.T  # Typically the loading matrix is the transpose of components_
+#             mean = fa_object.mean_
+            
+            
+#             inflate_vars_kwargs = {
+#                 'loading_matrix': loading_matrix,
+#                 'mean': np.zeros_like(mean)  # we had an issue of centering twice 
+#             }
+#             print("Successfully extracted FA parameters for variance inflation")
+#         except AttributeError as e:
+#             print(f"Error extracting FA parameters: {e}. Using default inflation parameters.")
+    
+
+#     for csv_file in csv_files:
+#         print(f"Processing file: {csv_file}")
+        
+#         all_pred_files = []
+#         for view in views:
+#             # Replace curr_view with view in directory name
+#             curr_dir_name = original_dir.replace(curr_view, view) if curr_view in original_dir else original_dir
+            
+#             for seed_dir in seed_dirs:
+#                 seed_video_dir = os.path.join(seed_dir, inference_dir)
+#                 seed_sequence_dir = os.path.join(seed_video_dir, curr_dir_name)
+                
+#                 if os.path.exists(seed_sequence_dir):
+#                     pred_file = os.path.join(seed_sequence_dir, csv_file)
+#                     if os.path.exists(pred_file):
+#                         all_pred_files.append(pred_file)
+        
+#         if all_pred_files:
+#             # Get input data and run EKS
+#             input_dfs_list, keypoint_names = format_data(
+#                 input_source=all_pred_files,
+#                 camera_names=views,
+#             )
+            
+#             results_dfs = run_eks_multiview(
+#                 markers_list=input_dfs_list,
+#                 keypoint_names=keypoint_names,
+#                 views=views,
+#                 quantile_keep_pca=50, # this is for the labeled frames and I hope it will work... 
+#                 pca_object = pca_object,
+#                 inflate_vars_kwargs=inflate_vars_kwargs
+#                 # 'inflate_vars_likelihood_thresh'=0, # give it the loading matriox for the FA object - this 2 are only for variance inflation  
+#                 # inflate_vars_v_quantile_thresh=50, # give it the mean vector for the FA object 
+#             )
+            
+#             # Save results using original filename (only for current view)
+#             for view, result_df in results_dfs.items():
+#                 # if view == curr_view:
+#                 # Create the view-specific output path
+#                 view_dir_name = original_dir.replace(curr_view, view)
+#                 view_output_dir = os.path.join(output_dir, view_dir_name)
+                
+#                 # Save to the view-specific directory
+#                 result_file = os.path.join(view_output_dir, csv_file)
+#                 result_df.to_csv(result_file)
+#                 print(f"Saved EKS results for view {view} to {result_file}")
+#                 # result_file = os.path.join(sequence_output_dir, csv_file)
+#                 # result_file = result_file.replace(curr_view, view)
+#                 # result_df.to_csv(result_file)
+#                 # print(f"Saved EKS results to {result_file}")
+
 def process_multiview_directory(
     original_dir: str,
     csv_files: List[str],
@@ -407,15 +536,30 @@ def process_multiview_directory(
         else:
             print("Warning: No FA object available for variance inflation")
 
-    # if fa_object is not None:
-    #     print("Using FA object for variance inflation")
-    # else:
-    #     print("No FA object available for variance inflation - we are in process_multiview_directory")
-
-    # Create output directories for ALL views in advance
+    # Create output directory for the current view
+    sequence_output_dir = os.path.join(output_dir, original_dir)
+    os.makedirs(sequence_output_dir, exist_ok=True)
+    
+    # Create a mapping from view to directory name
+    view_to_dir = {}
     for view in views:
-        # Replace curr_view with each view to get view-specific directory names
-        view_dir_name = original_dir.replace(curr_view, view)
+        # Handle the case where curr_view might not be in original_dir
+        if curr_view in original_dir:
+            view_dir_name = original_dir.replace(curr_view, view)
+        else:
+            # If curr_view not found in original_dir, try to find a pattern
+            parts = original_dir.split('_')
+            # Find which part might contain a view name
+            for i, part in enumerate(parts):
+                if any(v in part for v in views):
+                    # Replace that part with the new view
+                    parts[i] = part.replace(part, view)
+                    break
+            view_dir_name = '_'.join(parts)
+        
+        view_to_dir[view] = view_dir_name
+        
+        # Create output directory for this view
         view_output_dir = os.path.join(output_dir, view_dir_name)
         os.makedirs(view_output_dir, exist_ok=True)
         print(f"Created output directory for {view}: {view_output_dir}")
@@ -428,24 +572,23 @@ def process_multiview_directory(
             loading_matrix = fa_object.components_.T  # Typically the loading matrix is the transpose of components_
             mean = fa_object.mean_
             
+            
             inflate_vars_kwargs = {
                 'loading_matrix': loading_matrix,
-                'mean': mean,
-                # 'mean': np.zeros_like(mean)  # we had an issue of centering twice 
+                'mean': np.zeros_like(mean)  # we had an issue of centering twice 
             }
             print("Successfully extracted FA parameters for variance inflation")
         except AttributeError as e:
             print(f"Error extracting FA parameters: {e}. Using default inflation parameters.")
-
-    # Process each CSV file only once
+    
     for csv_file in csv_files:
         print(f"Processing file: {csv_file}")
         
         all_pred_files = []
+        
         # Collect prediction files for all views
         for view in views:
-            # Create view-specific directory name
-            view_dir_name = original_dir.replace(curr_view, view)
+            view_dir_name = view_to_dir[view]
             
             for seed_dir in seed_dirs:
                 seed_video_dir = os.path.join(seed_dir, inference_dir)
@@ -455,35 +598,43 @@ def process_multiview_directory(
                     pred_file = os.path.join(seed_sequence_dir, csv_file)
                     if os.path.exists(pred_file):
                         all_pred_files.append(pred_file)
+                        print(f"Found prediction file for {view}: {pred_file}")
+                else:
+                    print(f"Warning: Directory does not exist: {seed_sequence_dir}")
         
         if all_pred_files:
-            # Get input data and run EKS - only once per CSV file, not per view
-            input_dfs_list, keypoint_names = format_data(
-                input_source=all_pred_files,
-                camera_names=views,
-            )
-
-            print(f"the inflation vars kwargs are {inflate_vars_kwargs}")
-            print(f" the pca object is {pca_object}")
-            results_dfs = run_eks_multiview(
-                markers_list=input_dfs_list,
-                keypoint_names=keypoint_names,
-                views=views,
-                quantile_keep_pca=100, # this is for the labeled frames
-                pca_object=pca_object,
-                inflate_vars_kwargs=inflate_vars_kwargs
-            )
-            
-            # Save results for each view
-            for view, result_df in results_dfs.items():
-                # Create the view-specific directory name and output path
-                view_dir_name = original_dir.replace(curr_view, view)
-                view_output_dir = os.path.join(output_dir, view_dir_name)
+            print(f"Total prediction files found: {len(all_pred_files)}")
+            # Get input data and run EKS
+            try:
+                input_dfs_list, keypoint_names = format_data(
+                    input_source=all_pred_files,
+                    camera_names=views,
+                )
                 
-                # Save to the view-specific directory
-                result_file = os.path.join(view_output_dir, csv_file)
-                result_df.to_csv(result_file)
-                print(f"Saved EKS results for view {view} to {result_file}")
+                results_dfs = run_eks_multiview(
+                    markers_list=input_dfs_list,
+                    keypoint_names=keypoint_names,
+                    views=views,
+                    quantile_keep_pca=50,
+                    pca_object=pca_object,
+                    inflate_vars_kwargs=inflate_vars_kwargs
+                )
+                
+                # Save results for each view
+                for view, result_df in results_dfs.items():
+                    view_dir_name = view_to_dir[view]
+                    view_output_dir = os.path.join(output_dir, view_dir_name)
+                    
+                    # Save to the view-specific directory
+                    result_file = os.path.join(view_output_dir, csv_file)
+                    result_df.to_csv(result_file)
+                    print(f"Saved EKS results for view {view} to {result_file}")
+            except Exception as e:
+                print(f"Error processing file {csv_file}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"No prediction files found for {csv_file} across all views")
 
 
 def process_singleview_directory(
@@ -642,11 +793,6 @@ def post_process_ensemble_labels(
         else:
             print("No FA object available for post-processing")
 
-    # if fa_object is not None:
-    #     print("Using FA object for variance inflation")
-    # else:
-    #     print("No FA object available for variance inflation we are in post_process_ensemble_labels")
-
     # Setup directories
     base_dir = os.path.dirname(results_dir)
     ensemble_dir, seed_dirs, _ = setup_ensemble_dirs(
@@ -674,37 +820,18 @@ def post_process_ensemble_labels(
         original_structure = get_original_structure(first_seed_dir, inference_dir, views)
         
         if mode == 'eks_multiview':
-            # For multiview mode, process each sequence once, not per view
-            # Group directories by sequence (removing the view-specific part)
-            sequences = {}
-            for original_dir in original_structure.keys():
-                # Extract the sequence name by removing view identifier
+            # Process each view-specific directory for multiview EKS
+            for original_dir, csv_files in original_structure.items():
+                print(f"Processing directory: {original_dir}")
+                
                 curr_view = next((part for part in original_dir.split("_") if part in views), 
-                               original_dir.split("_")[-1])
+                                 original_dir.split("_")[-1])
                 
-                # Create a sequence key by replacing the view with a placeholder
-                sequence_key = original_dir.replace(curr_view, "VIEW_PLACEHOLDER")
-                
-                if sequence_key not in sequences:
-                    sequences[sequence_key] = []
-                
-                # Store the original directory and its view
-                sequences[sequence_key].append((original_dir, curr_view))
-            
-            # Process each sequence once (not per view)
-            for sequence_key, dir_view_pairs in sequences.items():
-                # Take the first directory as reference for processing
-                first_dir, first_view = dir_view_pairs[0]
-                csv_files = original_structure[first_dir]
-                
-                print(f"Processing sequence: {sequence_key} with {len(csv_files)} CSV files")
-                
-                # Process this sequence only once
                 process_multiview_directory(
-                    first_dir, csv_files, first_view, views, 
+                    original_dir, csv_files, curr_view, views, 
                     seed_dirs, inference_dir, output_dir, mode,
-                    pca_object=pca_object,
-                    fa_object=fa_object
+                    pca_object = pca_object,
+                    fa_object = fa_object
                 )
             
             # Process final predictions for all views
@@ -924,7 +1051,31 @@ def run_eks_multiview(
         processed keypoint data with statistics including coordinates, likelihoods, ensemble
         medians, ensemble variances, and posterior variances.
     """
+
+
     print(f'Input data loaded for keypoints for multiview data: {keypoint_names}')
+    
+    # # Initialize markers list
+    # markers_list_all = []
+    
+    # # 1. iterate over keypoints
+    # for keypoint in keypoint_names:
+    #     # seperate predictions by camera view for current keypoint 
+    #     markers_list_cameras = [[] for _ in range(len(views))]
+    #     # 2. organize data by camera view
+    #     for c, camera_name in enumerate(views):
+    #         ensemble_members = markers_list[c] # get ensemble member for this camera 
+    #         # 3. each dataframe in markers_list is an ensemble member - process each ensemble member 
+    #         for markers_curr in ensemble_members:
+    #             non_likelihood_keys = [
+    #                 key
+    #                 for key in markers_curr.keys()
+    #                 if keypoint in str(key)  # Match keypoint name in column names
+    #             ]
+                
+    #             markers_list_cameras[c].append(markers_curr[non_likelihood_keys])
+            
+    #     markers_list_all.append(markers_list_cameras)
 
     marker_array = input_dfs_to_markerArray(markers_list, keypoint_names, camera_names=views)
     # run the ensemble kalman smoother for multiview data
@@ -937,12 +1088,31 @@ def run_eks_multiview(
         s_frames = [(None,None)], # Keemin wil fix 
         avg_mode = avg_mode,
         var_mode = var_mode,
-        inflate_vars = True,
+        inflate_vars = False,
         inflate_vars_kwargs = inflate_vars_kwargs,
         verbose = verbose,
         pca_object = pca_object,
     )
 
+    
+
+    # camera_dfs, smooth_params_final = ensemble_kalman_smoother_multicam2(
+    #     markers_list = markers_list_all,
+    #     keypoint_names = keypoint_names,
+    #     smooth_param = 10000,
+    #     quantile_keep_pca= 50, #quantile_keep_pca
+    #     camera_names = views,
+    #     s_frames = [(None,None)], # Keemin wil fix 
+    #     avg_mode = avg_mode,
+    #     var_mode = var_mode,
+    #     inflate_vars = False,
+    #     inflate_vars_kwargs = {
+    #         'likelihood_threshold': inflate_vars_likelihood_thresh,
+    #         'v_quantile_threshold': inflate_vars_v_quantile_thresh,
+    #     },
+    #     verbose = verbose,
+    #     pca_object = pca_object
+    # )
 
     # Process results for each view
     results_arrays = {}
@@ -973,5 +1143,8 @@ def run_eks_multiview(
         print(f'Successfully processed view {view}')
     
     return results_dfs
+
+                    
+
 
 
