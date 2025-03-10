@@ -49,6 +49,9 @@ try:
     print(f"PCA model loaded successfully from {pca_model_path}.")
 except AttributeError as e:
     print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
+except FileNotFoundError as e:
+    print(f"Skipping loading pca_object from {pca_model_path}:")
+    print(e)
 
 try:
     with open(fa_model_path, "rb") as f:
@@ -56,6 +59,9 @@ try:
     print(f"PCA model loaded successfully from {fa_model_path}. for the purpose of variance inflation.")
 except AttributeError as e:
     print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
+except FileNotFoundError as e:
+    print(f"Skipping loading pca_object from {pca_model_path}:")
+    print(e)
 
 # # Load FA object before defining functions
 # try:
@@ -441,29 +447,29 @@ def process_multiview_directory(
     # Process each CSV file only once
     for csv_file in csv_files:
         print(f"Processing file: {csv_file}")
-        
+
         all_pred_files = []
         # Collect prediction files for all views
         for view in views:
             # Create view-specific directory name
             view_dir_name = original_dir.replace(curr_view, view)
-            
+
             for seed_dir in seed_dirs:
                 seed_video_dir = os.path.join(seed_dir, inference_dir)
                 seed_sequence_dir = os.path.join(seed_video_dir, view_dir_name)
-                
+
                 if os.path.exists(seed_sequence_dir):
                     pred_file = os.path.join(seed_sequence_dir, csv_file)
                     if os.path.exists(pred_file):
                         all_pred_files.append(pred_file)
-        
+
         if all_pred_files:
-            def _prepare_multiview_eks_uncropped_predictions(
-                all_pred_files: list[str],
-            ):
+
+            def _prepare_multiview_eks_uncropped_predictions(all_pred_files: list[str]):
                 # Check if a bbox file exists
                 # has_checked_bbox_file caches the file check
                 has_checked_bbox_file = False
+                all_pred_files_uncropped = []
                 for p in all_pred_files:
                     p = Path(p)
                     # p is the absolute path to the prediction file.
@@ -485,7 +491,11 @@ def process_multiview_directory(
                 return all_pred_files_uncropped
 
             # Not None when there's bbox files in the dataset, i.e. chickadee-crop.
-            all_pred_files_uncropped = _prepare_multiview_eks_uncropped_predictions() if get_bbox_path_fn is not None else None
+            all_pred_files_uncropped = (
+                _prepare_multiview_eks_uncropped_predictions(all_pred_files)
+                if get_bbox_path_fn is not None
+                else None
+            )
             # Get input data and run EKS - only once per CSV file, not per view
             input_dfs_list, keypoint_names = format_data(
                 input_source=all_pred_files_uncropped or all_pred_files,
