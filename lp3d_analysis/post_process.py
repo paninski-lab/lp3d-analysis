@@ -245,7 +245,11 @@ def get_original_structure(
                 continue
 
             print(f"Checking directory: {dir_path}")
-            csv_files = [f for f in os.listdir(dir_path) if f.endswith('.csv')]
+            csv_files = [
+                f
+                for f in os.listdir(dir_path)
+                if f.endswith(".csv") and not f.endswith("_uncropped.csv")
+            ]
             print(f"Found {len(csv_files)} CSV files in {dir_name}")
             original_structure[dir_name] = csv_files
         
