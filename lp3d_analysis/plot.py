@@ -16,8 +16,17 @@ plot_colors = {
     'ensemble_variance': 'brown',
     'labels': '#FFD700', #(Bright Gold)
     'pca_reprojection': 'pink',
-    'eks_multiview_smooth':  '#FFD700',
+    'eks_multiview_smooth':  'green',
     'eks_multiview_varinf_smooth': 'brown', 
+    'eks_multiview_10000':  '#FFD700',
+    'eks_multiview_varinf_10000': 'brown', 
+    'eks_multiview_pca_mean':  'brown',
+    'eks_multiview_quantile_100':  'teal', 
+    'eks_multiview_varinf_quantile_100': 'blue',
+    'eks_multiview_varinf_pca_mean':  '#FFD700',
+    'eks_multiview_smooth_pca_mean':  'lightcoral', # kind of purple 
+    'eks_multiview_quantile_50': 'pink',
+    'eks_multiview_varinf_quantile_50': 'lightcoral',
     
 }
 

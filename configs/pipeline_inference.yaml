@@ -1,7 +1,7 @@
 #TODO 
 # ask Matt about adding the views variable to the config file so we can pick the views that we have and in that way instead of iterating over files we will iterate over views - which will determine things
 
-dataset_name: mirror-mouse-separate
+dataset_name: fly-anipose
 
 lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_${dataset_name}.yaml
 
@@ -42,7 +42,6 @@ train_networks:
     - videos-for-each-labeled-frame
     # - videos_debug
     # - videos_ind
-
 
   # training parameters
   # min_steps: 5000

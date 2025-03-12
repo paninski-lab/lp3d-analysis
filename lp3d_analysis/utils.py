@@ -1,8 +1,11 @@
 import os
 import numpy as np
 import pandas as pd
+import traceback
 
+from lightning_pose.utils import io as io_utils
 from lightning_pose.utils.scripts import compute_metrics_single
+
 
 from omegaconf import DictConfig
 
@@ -20,12 +23,22 @@ def extract_ood_frame_predictions(
 ) -> None:
 
     new_csv_files = [f for f in os.listdir(data_dir) if f.endswith('_new.csv')]
+    print(f"the new csv files are {new_csv_files}")
 
     for csv_file in new_csv_files:
         # load original csv 
         file_path = os.path.join(data_dir, csv_file)
+        print(f"the file path is {file_path}")
         original_df = pd.read_csv(file_path, header=[0,1,2], index_col=0)
+        original_df = io_utils.fix_empty_first_row(original_df) 
         original_index = original_df.index  
+        
+
+        # Debug the first frame in the index
+        print(f"Original index has {len(original_index)} entries")
+        if len(original_index) > 0:
+            first_frame = original_index[0]
+            print(f"First frame in index: {first_frame}")
 
         # load each of the new csv files and iterate through the index 
         prediction_name = '_'.join(csv_file.split('_')[1:])
@@ -39,13 +52,12 @@ def extract_ood_frame_predictions(
         #file_path = os.path.join(data_dir, csv_file)
         #df = pd.read_csv(file_path, header=[0,1,2], index_col=0)
         
-    
-
         # for img_path in df.index:
         for img_path in original_index:
             # process the paths 
             relative_img_path = '/'.join(img_path.split('/')[1:]) # removed 'labeled-data/'
             snippet_path = relative_img_path.replace('png', 'mp4')
+
             
             # Load the 51-frame csv file 
             snippet_file = os.path.join(results_dir, video_dir , snippet_path.replace('mp4', 'csv'))
@@ -82,6 +94,7 @@ def extract_ood_frame_predictions(
                 print(f"Succesfully computed metrics for {preds_file}")
             except Exception as e:
                 print(f"Error computing metrics\n{e}")
+                print(traceback.format_exc())
 
         
     # look for all files that end in _new.csv -> these are OOD labels

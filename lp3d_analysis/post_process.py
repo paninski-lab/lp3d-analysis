@@ -9,6 +9,7 @@ from omegaconf import DictConfig
 from typing import List, Literal, Tuple, Dict, Any 
 from pathlib import Path
 
+from lightning_pose.utils import io as io_utils
 from lightning_pose.utils.cropzoom import generate_cropped_csv_file
 from lightning_pose.utils.scripts import (
     compute_metrics,
@@ -27,9 +28,11 @@ This is loading the pca and FA objects - we will probably not use it like that l
 '''
 
 # pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_fly.pkl"
-pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_mirror-mouse-separate.pkl"
+# pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_mirror-mouse-separate.pkl"
+# pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_chickadee-crop.pkl"
 # fa_model_path = "/teamspace/studios/this_studio/fa_object_inD_fly.pkl"
 fa_model_path = "/teamspace/studios/this_studio/pca_object_inD_mirror-mouse-separate.pkl"
+# fa_model_path = "/teamspace/studios/this_studio/pca_object_inD_chickadee-crop.pkl"
 
 # Custom function to force pickle to find NaNPCA2 in pca_global
 class CustomUnpickler(pickle.Unpickler):
@@ -42,16 +45,16 @@ class CustomUnpickler(pickle.Unpickler):
             return EnhancedFactorAnalysis
         return super().find_class(module, name)
 
-# Load PCA object before defining functions
-try:
-    with open(pca_model_path, "rb") as f:
-        pca_object = CustomUnpickler(f).load()
-    print(f"PCA model loaded successfully from {pca_model_path}.")
-except AttributeError as e:
-    print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
-except FileNotFoundError as e:
-    print(f"Skipping loading pca_object from {pca_model_path}:")
-    print(e)
+# # Load PCA object before defining functions
+# try:
+#     with open(pca_model_path, "rb") as f:
+#         pca_object = CustomUnpickler(f).load()
+#     print(f"PCA model loaded successfully from {pca_model_path}.")
+# except AttributeError as e:
+#     print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
+# except FileNotFoundError as e:
+#     print(f"Skipping loading pca_object from {pca_model_path}:")
+#     print(e)
 
 try:
     with open(fa_model_path, "rb") as f:
@@ -60,7 +63,7 @@ try:
 except AttributeError as e:
     print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
 except FileNotFoundError as e:
-    print(f"Skipping loading pca_object from {pca_model_path}:")
+    print(f"Skipping loading pca_object from {fa_model_path}:")
     print(e)
 
 # # Load FA object before defining functions
@@ -94,6 +97,7 @@ def process_predictions(pred_file: str, include_likelihood = True, include_varia
         return None, None, None, None, None
         
     df = pd.read_csv(pred_file, header=[0, 1, 2], index_col=0)
+    df = io_utils.fix_empty_first_row(df)  # Add this line
 
     # Select column structure: Default includes 'x', 'y', and 'likelihood' and I want to load ensemble variances if I can 
     # selected_coords = ['x', 'y', 'likelihood'] if include_likelihood else ['x', 'y']
@@ -129,7 +133,9 @@ def process_final_predictions(
     # Load original CSV file to get frame paths
     orig_pred_file = os.path.join(seed_dirs[0], inference_dir, f'predictions_{view}_new.csv')
     original_df = pd.read_csv(orig_pred_file, header=[0, 1, 2], index_col=0)
+    original_df = io_utils.fix_empty_first_row(original_df)
     original_index = original_df.index
+    print(f" the original index is ")
     results_list = []
     
     # Process each path from original predictions
@@ -147,6 +153,7 @@ def process_final_predictions(
             try:
                 # Load the CSV with multi-index columns
                 snippet_df = pd.read_csv(snippet_file, header=[0, 1, 2], index_col=0)
+                snippet_df = io_utils.fix_empty_first_row(snippet_df)
                 print(f"Loaded snippet file with shape: {snippet_df.shape}")
                 
                 # Ensure odd number of frames
@@ -195,10 +202,11 @@ def process_final_predictions(
         cfg_lp_view.data.view_names = [view]
         
         try:
-            compute_metrics(cfg=cfg_lp_view, preds_file=preds_file, data_module=None)
+            compute_metrics(cfg=cfg_lp_view, preds_file=[preds_file], data_module=None) #. Ichanged the preds_file to a list because of a problem... 
             print(f"Successfully computed metrics for {preds_file}")
         except Exception as e:
             print(f"Error computing metrics for {view}: {str(e)}")
+            print(traceback.format_exc())
     else:
         print(f"Warning: No frames processed for view {view}")
 
@@ -441,8 +449,8 @@ def process_multiview_directory(
             
             inflate_vars_kwargs = {
                 'loading_matrix': loading_matrix,
-                'mean': mean,
-                # 'mean': np.zeros_like(mean)  # we had an issue of centering twice 
+                # 'mean': mean,
+                'mean': np.zeros_like(mean)  # we had an issue of centering twice 
             }
             print("Successfully extracted FA parameters for variance inflation")
         except AttributeError as e:
@@ -869,6 +877,7 @@ def post_process_ensemble_videos(
                 if pred_files_for_view:
                     # Get sample dataframe to extract indices
                     sample_df = pd.read_csv(pred_files_for_view[0], header=[0, 1, 2], index_col=0)
+                    sample_df = io_utils.fix_empty_first_row(sample_df) # I don't necessarily need here
                     view_indices[view] = sample_df.index.tolist()
                     all_pred_files.extend(pred_files_for_view)
             
@@ -997,7 +1006,7 @@ def run_eks_multiview(
     camera_dfs, smooth_params_final = ensemble_kalman_smoother_multicam(
         marker_array = marker_array,
         keypoint_names = keypoint_names,
-        smooth_param = None,
+        smooth_param = 10000,
         quantile_keep_pca= quantile_keep_pca, #quantile_keep_pca
         camera_names = views,
         s_frames = [(None,None)], # Keemin wil fix 
