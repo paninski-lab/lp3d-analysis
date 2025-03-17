@@ -1,3 +1,4 @@
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
@@ -78,10 +79,11 @@ def generate_paths_with_models_and_ensembles(
     base_path="/teamspace/studios",
     data_dir="data",
     studio_dir="this_studio",
-    output_dir="outputs"
+    output_dir="outputs",
 ):
     """
     Generate paths for ground truth and prediction data with models and ensembles.
+    For cropped dataset like chickadee-crop, returns data in uncropped space (bboxes added).
     
     Args:
         dataset_name (str): Name of the dataset (e.g., 'fly-anipose')
@@ -99,21 +101,25 @@ def generate_paths_with_models_and_ensembles(
     Returns:
         tuple: (ground_truth_csvs, file_paths)
     """
-    # Generate ground truth paths
-    # ground_truth_csvs = {
-    #     view: os.path.join(base_path, data_dir, dataset_name, f'CollectedData_{view}_new.csv') 
-    #     for view in views
-    # }
-
     In_Dist_paths = {
-        view: os.path.join(base_path, data_dir, dataset_name, f'CollectedData_{view}.csv') 
+        view: os.path.join(base_path, data_dir, dataset_name, f'remapped_CollectedData_{view}.csv')
         for view in views
     }
+    if not Path(In_Dist_paths[views[0]]).is_file():
+        In_Dist_paths = {
+            view: os.path.join(base_path, data_dir, dataset_name, f'CollectedData_{view}.csv')
+            for view in views
+        }
 
     Out_Dist_paths = {
-        view: os.path.join(base_path, data_dir, dataset_name, f'CollectedData_{view}_new.csv') 
+        view: os.path.join(base_path, data_dir, dataset_name, f'remapped_CollectedData_{view}_new.csv')
         for view in views
     }
+    if not Path(Out_Dist_paths[views[0]]).is_file():
+        Out_Dist_paths = {
+            view: os.path.join(base_path, data_dir, dataset_name, f'CollectedData_{view}_new.csv')
+            for view in views
+        }
 
 
     # Generate prediction paths

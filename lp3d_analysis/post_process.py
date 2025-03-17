@@ -5,6 +5,7 @@ import pickle
 
 from typing import Optional, Union, Callable
 
+from lp3d_analysis import io
 from omegaconf import DictConfig
 from typing import List, Literal, Tuple, Dict, Any 
 from pathlib import Path
@@ -14,6 +15,7 @@ from lightning_pose.utils.cropzoom import generate_cropped_csv_file
 from lightning_pose.utils.scripts import (
     compute_metrics,
 )
+from lightning_pose.utils import io as io_utils
 
 from eks.singlecam_smoother import ensemble_kalman_smoother_singlecam, fit_eks_singlecam
 from eks.multicam_smoother import ensemble_kalman_smoother_multicam
@@ -97,7 +99,9 @@ def process_predictions(pred_file: str, include_likelihood = True, include_varia
         return None, None, None, None, None
         
     df = pd.read_csv(pred_file, header=[0, 1, 2], index_col=0)
-    df = io_utils.fix_empty_first_row(df)  # Add this line
+    # Fix empty first row of labeled data file.
+    # (`process_predictions` is sometimes called on CollectedData csv files.)
+    df = io_utils.fix_empty_first_row(df)
 
     # Select column structure: Default includes 'x', 'y', and 'likelihood' and I want to load ensemble variances if I can 
     # selected_coords = ['x', 'y', 'likelihood'] if include_likelihood else ['x', 'y']
@@ -404,6 +408,46 @@ def fill_ensemble_results(
         results_df.loc[:, (scorer, bodypart, 'y_ens_var')] = ensemble_vars[:, k, 1]
 
 
+def _get_bbox_path_fn(p: Path, results_dir: Path, data_dir: Path) -> Path:
+    """Given some preds file `p` and `results_dir`, it will return p's
+    corresponding bbox path in the data directory."""
+    # Gets the current depth in the model directory.
+    n_levels_up = len(p.parent.parts) - len(results_dir.parts)
+    # Hack: correct the logic for when transforming results of eks_multiview back to cropped space.
+    if "eks_multiview" in p.parts:
+        n_levels_up -= 1
+    # Get `p` relative to model_dir
+    model_dir = p.parents[n_levels_up]
+    relative_p = Path(p).relative_to(model_dir)
+    p_in_data_dir = data_dir / relative_p
+    bbox_path = p_in_data_dir.with_stem(p.stem + "_bbox")
+    return bbox_path
+
+def prepare_uncropped_csv_files(csv_files: list[str], get_bbox_path_fn: Callable[[Path, ], Path]):
+    # Check if a bbox file exists
+    # has_checked_bbox_file caches the file check
+    has_checked_bbox_file = False
+    csv_files_uncropped = []
+    for p in csv_files:
+        p = Path(p)
+        # p is the absolute path to the prediction file.
+        # The bbox path has the same relative directory structure but rooted in the data directory
+        # and suffixed by _bbox.csv.
+        bbox_path = get_bbox_path_fn(p)
+
+        if not has_checked_bbox_file:
+            if not bbox_path.is_file():
+                return None
+            has_checked_bbox_file = True
+
+        # If there's a bbox_file, remap to original space by adding bbox df to preds df.
+        # Save as _uncropped.csv version of preds_file.
+        remapped_p = p.with_stem(p.stem + "_uncropped")
+        csv_files_uncropped.append(str(remapped_p))
+        generate_cropped_csv_file(p, bbox_path, remapped_p, mode="add")
+
+    return csv_files_uncropped
+
 # Modified process_multiview_directory function to handle results for all views properly
 def process_multiview_directory(
     original_dir: str,
@@ -478,35 +522,9 @@ def process_multiview_directory(
                         all_pred_files.append(pred_file)
 
         if all_pred_files:
-
-            def _prepare_multiview_eks_uncropped_predictions(all_pred_files: list[str]):
-                # Check if a bbox file exists
-                # has_checked_bbox_file caches the file check
-                has_checked_bbox_file = False
-                all_pred_files_uncropped = []
-                for p in all_pred_files:
-                    p = Path(p)
-                    # p is the absolute path to the prediction file.
-                    # The bbox path has the same relative directory structure but rooted in the data directory
-                    # and suffixed by _bbox.csv.
-                    bbox_path = get_bbox_path_fn(p)
-
-                    if not has_checked_bbox_file:
-                        if not bbox_path.is_file():
-                            return None
-                        has_checked_bbox_file = True
-
-                    # If there's a bbox_file, remap to original space by adding bbox df to preds df.
-                    # Save as _uncropped.csv version of preds_file.
-                    remapped_p = p.with_stem(p.stem + "_uncropped")
-                    all_pred_files_uncropped.append(str(remapped_p))
-                    generate_cropped_csv_file(p, bbox_path, remapped_p, mode="add")
-
-                return all_pred_files_uncropped
-
             # Not None when there's bbox files in the dataset, i.e. chickadee-crop.
             all_pred_files_uncropped = (
-                _prepare_multiview_eks_uncropped_predictions(all_pred_files)
+                prepare_uncropped_csv_files(all_pred_files, get_bbox_path_fn)
                 if get_bbox_path_fn is not None
                 else None
             )
@@ -827,23 +845,13 @@ def post_process_ensemble_labels(
                 
                 print(f"Processing sequence: {sequence_key} with {len(csv_files)} CSV files")
 
-                def _get_bbox_path(p: Path) -> Path:
-                    """Given some preds file p, it will return the bbox path."""
-                    n_levels_up = len(p.parent.parts) - len(Path(results_dir).parts)
-                    if "eks_multiview" in p.parts:
-                        n_levels_up -= 1
-                    p_minus_model_dir = Path(p).relative_to(p.parents[n_levels_up])
-                    p_rooted_at_data_dir = Path(cfg_lp.data.data_dir) / p_minus_model_dir
-                    bbox_path = p_rooted_at_data_dir.with_stem(p.stem + "_bbox")
-                    return bbox_path
-
                 # Process this sequence only once
                 process_multiview_directory(
                     first_dir, csv_files, first_view, views, 
                     seed_dirs, inference_dir, output_dir, mode,
                     pca_object=pca_object,
                     fa_object=fa_object,
-                    get_bbox_path_fn=_get_bbox_path
+                    get_bbox_path_fn=lambda p: _get_bbox_path_fn(p, Path(results_dir), Path(cfg_lp.data.data_dir))
                 )
             
             # Process final predictions for all views
@@ -1007,117 +1015,74 @@ def post_process_ensemble_videos(
         inf_dir_in_first_seed = os.path.join(first_seed_dir, inference_dir)
         
         # Check if the inference_dir contains ANY subdirectories
-        entries = os.listdir(inf_dir_in_first_seed)
+        # entries: sort so that sessions are in the same order for each view.
+        entries = list(sorted(filter(lambda f: not f.endswith("_uncropped.csv"), os.listdir(inf_dir_in_first_seed))))
         contains_subdirectory = any(os.path.isdir(os.path.join(inf_dir_in_first_seed, entry)) for entry in entries)
         
         if contains_subdirectory:
             print(f"Found subdirectories in {inf_dir_in_first_seed}. Skipping.")
             continue  # Skip if there are any subdirectories
-        
+
         print(f"Directory contains only files. Processing {inference_dir}...")
         output_dir = os.path.join(ensemble_dir, mode, inference_dir)
         os.makedirs(output_dir, exist_ok=True)
 
         if mode == 'eks_multiview':
-            # For EKS multiview, we need to handle all views together for each video
-            files = [f for f in os.listdir(inf_dir_in_first_seed) if f.endswith('.csv')]
-            
-            # Get all CSV files from the first seed directory
-            # Group by common prefix before view name (assuming format is something like prefix_view.csv)
-            video_groups = {}
-            
-            # First, group by file naming pattern
-            for file in files:
-                found_view = None
-                for view in views:
-                    if view in file:
-                        found_view = view
-                        break
-                
-                if found_view:
-                    # Try to extract a video identifier from the filename
-                    parts = file.split(f"_{found_view}")
-                    video_prefix = parts[0]
-                    
-                    if not video_prefix:
-                        # If view is at the beginning, use the part after it
-                        if len(parts) > 1:
-                            video_prefix = parts[1]
-                        else:
-                            video_prefix = "unknown"
-                    
-                    if video_prefix not in video_groups:
-                        video_groups[video_prefix] = {}
-                    
-                    video_groups[video_prefix][found_view] = file
-            
-            # If grouping failed, try simpler approaches
-            if not video_groups:
-                # If we have exactly one file per view, assume they're all for the same video
-                if all(sum(1 for f in files if view in f) == 1 for view in views):
-                    video_groups["single_video"] = {}
-                    for view in views:
-                        for f in files:
-                            if view in f:
-                                video_groups["single_video"][view] = f
-                                break
-            
-            print(f"Identified {len(video_groups)} videos to process")
-            
-            # Process each video separately
-            for video_prefix, view_files in video_groups.items():
-                available_views = list(view_files.keys())
-                
-                if len(available_views) < 2:
-                    print(f"Not enough views for video {video_prefix}. Found: {available_views}. Need at least 2 views.")
-                    continue
-                
-                print(f"Processing video {video_prefix} with views: {available_views}")
-                
-                # Collect all prediction files for this video across views and seeds
+            # Get the files in the inference directory partitioned by view.
+            files_by_view = io.collect_files_by_token(list(map(Path, entries)), views)
+            # Get the files in the inference directory FOR JUST ONE VIEW.
+            # There should be one file per session. These we call "first view sessions".
+            first_view_sessions = list(map(str, files_by_view[views[0]]))
+            for first_view_session in first_view_sessions:
+                # Process multiview case for videos
                 all_pred_files = []
-                
-                for view in available_views:
-                    filename = view_files[view]
+
+                # Collect files for all views and seeds
+                for view in views:
+                    print(f"Processing view: {view}")
+                    # Get the filename of the prediction file for this session-view pair.
+                    session = first_view_session.replace(views[0], view)
+
                     for seed_dir in seed_dirs:
-                        pred_file = os.path.join(seed_dir, inference_dir, filename)
-                        if os.path.exists(pred_file):
-                            all_pred_files.append(pred_file)
-                
-                if not all_pred_files:
-                    print(f"No prediction files found for video {video_prefix}")
-                    continue
-                
-                # Process with multiview EKS
-                try:
-                    input_dfs_list, keypoint_names = format_data(
-                        input_source=all_pred_files,
-                        camera_names=available_views,
-                    )
-                    
-                    # Print debugging information
-                    print(f"Formatted {len(input_dfs_list)} dataframes for keypoints: {keypoint_names}")
-                    
-                    # Run multiview EKS
-                    results_dfs = run_eks_multiview(
-                        markers_list=input_dfs_list,
-                        keypoint_names=keypoint_names,
-                        views=available_views,
-                    )
-                    
-                    # Save results for each view
-                    for view in available_views:
-                        if view in results_dfs:
-                            result_df = results_dfs[view]
-                            result_file = os.path.join(output_dir, view_files[view])
-                            result_df.to_csv(result_file)
-                            print(f"Saved EKS multiview predictions for view {view} to {result_file}")
-                        else:
-                            print(f"Warning: No results generated for view {view}")
-                except Exception as e:
-                    print(f"Error processing video {video_prefix}: {str(e)}")
-                    import traceback
-                    traceback.print_exc()
+                        all_pred_files.append(os.path.join(seed_dir, inference_dir, session))
+
+                # Process ensemble data
+
+                # Not None when there's bbox files in the dataset, i.e. chickadee-crop.
+                all_pred_files_uncropped = prepare_uncropped_csv_files(all_pred_files, lambda p: _get_bbox_path_fn(p, Path(results_dir), Path(cfg_lp.data.data_dir)))
+
+
+                input_dfs_list, keypoint_names = format_data(
+                    input_source=all_pred_files_uncropped or all_pred_files,
+                    camera_names=views,
+                )
+
+                # Run multiview EKS
+                results_dfs = run_eks_multiview(
+                    markers_list=input_dfs_list,
+                    keypoint_names=keypoint_names,
+                    views=views,
+                )
+
+                # Save results for each view
+                for view in views:
+                    session = first_view_session.replace(views[0], view)
+                    result_df = results_dfs[view]
+                    result_file = Path(output_dir) / session
+                    # If cropped dataset, save to a _uncropped file, so that we can later undo the remapping.
+                    if all_pred_files_uncropped is not None:
+                        uncropped_result_file = result_file.with_stem(result_file.stem + "_uncropped")
+                    else:
+                        uncropped_result_file = None
+
+                    result_df.to_csv(uncropped_result_file or result_file)
+
+                    # Crop the multiview-eks output back to original cropped coordinate space.
+                    if all_pred_files_uncropped is not None:
+                        bbox_path = _get_bbox_path_fn(result_file, Path(results_dir), Path(cfg_lp.data.data_dir))
+                        generate_cropped_csv_file(uncropped_result_file, bbox_path, result_file, mode="subtract")
+
+                    print(f"Saved ensemble {mode} predictions for {view} view to {result_file}")
         else:
             # Process each view separately for other modes
             for view in views:
@@ -1214,6 +1179,9 @@ def run_eks_multiview(
     print(f'Input data loaded for keypoints for multiview data: {keypoint_names}')
 
     marker_array = input_dfs_to_markerArray(markers_list, keypoint_names, camera_names=views)
+    # Uncomment this to skip eks for testing purposes:
+    #return {view: markers_list[i][0] for i, view in enumerate(views)}
+
     # run the ensemble kalman smoother for multiview data
     camera_dfs, smooth_params_final = ensemble_kalman_smoother_multicam(
         marker_array = marker_array,
