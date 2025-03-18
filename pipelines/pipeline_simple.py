@@ -102,7 +102,7 @@ def pipeline(config_file: str, for_seed: int | None = None) -> None:
             for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
                 if mode_config.run: # if the mode is mean or median or eks_singleview 
                     #print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}"
-                    post_process_ensemble_labels(
+                    post_process_ensemble_labels( # remember I changed that for a second 
                         cfg_lp=cfg_lp_copy.copy(),
                         results_dir=results_dir,
                         model_type=model_type,

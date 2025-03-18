@@ -27,44 +27,44 @@ from eks.marker_array import MarkerArray, input_dfs_to_markerArray
 This is loading the pca and FA objects - we will probably not use it like that later 
 '''
 
-pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_fly.pkl"
+# pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_fly.pkl"
 # pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_mirror-mouse-separate.pkl"
 # pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_chickadee-crop.pkl"
-fa_model_path = "/teamspace/studios/this_studio/fa_object_inD_fly.pkl"
+# fa_model_path = "/teamspace/studios/this_studio/fa_object_inD_fly.pkl"
 # fa_model_path = "/teamspace/studios/this_studio/pca_object_inD_mirror-mouse-separate.pkl"
 # fa_model_path = "/teamspace/studios/this_studio/pca_object_inD_chickadee-crop.pkl"
 
-#Custom function to force pickle to find NaNPCA2 in pca_global
-class CustomUnpickler(pickle.Unpickler):
-    def find_class(self, module, name):
-        if name == "NaNPCA":
-            from lightning_pose.utils.pca import  NaNPCA
-            return NaNPCA
-        elif name == "EnhancedFactorAnalysis":
-            from lp3d_analysis.pca_global import EnhancedFactorAnalysis
-            return EnhancedFactorAnalysis
-        return super().find_class(module, name)
+# Custom function to force pickle to find NaNPCA2 in pca_global
+# class CustomUnpickler(pickle.Unpickler):
+#     def find_class(self, module, name):
+#         if name == "NaNPCA":
+#             from lightning_pose.utils.pca import  NaNPCA
+#             return NaNPCA
+#         elif name == "EnhancedFactorAnalysis":
+#             from lp3d_analysis.pca_global import EnhancedFactorAnalysis
+#             return EnhancedFactorAnalysis
+#         return super().find_class(module, name)
 
-# Load PCA object before defining functions
-try:
-    with open(pca_model_path, "rb") as f:
-        pca_object = CustomUnpickler(f).load()
-    print(f"PCA model loaded successfully from {pca_model_path}.")
-except AttributeError as e:
-    print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
-except FileNotFoundError as e:
-    print(f"Skipping loading pca_object from {pca_model_path}:")
-    print(e)
+# # # Load PCA object before defining functions
+# # try:
+# #     with open(pca_model_path, "rb") as f:
+# #         pca_object = CustomUnpickler(f).load()
+# #     print(f"PCA model loaded successfully from {pca_model_path}.")
+# # except AttributeError as e:
+# #     print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
+# # except FileNotFoundError as e:
+# #     print(f"Skipping loading pca_object from {pca_model_path}:")
+# #     print(e)
 
-try:
-    with open(fa_model_path, "rb") as f:
-        fa_object = CustomUnpickler(f).load()
-    print(f"PCA model loaded successfully from {fa_model_path}. for the purpose of variance inflation.")
-except AttributeError as e:
-    print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
-except FileNotFoundError as e:
-    print(f"Skipping loading pca_object from {fa_model_path}:")
-    print(e)
+# try:
+#     with open(fa_model_path, "rb") as f:
+#         fa_object = CustomUnpickler(f).load()
+#     print(f"PCA model loaded successfully from {fa_model_path}. for the purpose of variance inflation.")
+# except AttributeError as e:
+#     print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
+# except FileNotFoundError as e:
+#     print(f"Skipping loading pca_object from {fa_model_path}:")
+#     print(e)
 
 # # Load FA object before defining functions
 # try:
@@ -210,6 +210,162 @@ def process_final_predictions(
     else:
         print(f"Warning: No frames processed for view {view}")
 
+
+# def process_final_predictions_concat(
+#     view: str,
+#     output_dir: str,
+#     seed_dirs: List[str],
+#     inference_dir: str,
+#     cfg_lp: DictConfig,
+# ) -> None:
+#     """Process and save final predictions by extracting center frames from concatenated snippets"""
+    
+#     # Load original CSV file to get frame paths
+#     orig_pred_file = os.path.join(seed_dirs[0], inference_dir, f'predictions_{view}_new.csv')
+#     original_df = pd.read_csv(orig_pred_file, header=[0, 1, 2], index_col=0)
+#     original_df = io_utils.fix_empty_first_row(original_df)
+#     original_index = original_df.index
+#     print(f"Original index has {len(original_index)} entries")
+    
+#     results_list = []
+    
+#     # Group image paths by their directories
+#     image_paths_by_dir = {}
+#     for img_path in original_index:
+#         # Get sequence name (directory)
+#         sequence_name = img_path.split('/')[1]  # e.g., "180623_000_bot"
+#         if sequence_name not in image_paths_by_dir:
+#             image_paths_by_dir[sequence_name] = []
+#         image_paths_by_dir[sequence_name].append(img_path)
+    
+#     # Process each directory's frames together
+#     for sequence_name, img_paths in image_paths_by_dir.items():
+#         print(f"\nProcessing sequence: {sequence_name} with {len(img_paths)} frames")
+        
+#         # Find the appropriate directory name pattern for this sequence
+#         # Check different possible directory structures
+#         possible_dirs = [
+#             sequence_name,
+#             f"{sequence_name}_{view}",
+#             view + "_" + sequence_name
+#         ]
+        
+#         sequence_dir = None
+#         for dir_pattern in possible_dirs:
+#             matching_dirs = [d for d in os.listdir(output_dir) if dir_pattern in d]
+#             if matching_dirs:
+#                 sequence_dir = matching_dirs[0]
+#                 break
+        
+#         if not sequence_dir:
+#             print(f"Warning: Could not find directory for sequence {sequence_name}")
+#             continue
+        
+#         concat_file = os.path.join(output_dir, sequence_dir, "concatenated_sequence.csv")
+#         print(f"Looking for concatenated file: {concat_file}")
+        
+#         if os.path.exists(concat_file):
+#             try:
+#                 # Load the concatenated CSV with multi-index columns
+#                 concat_df = pd.read_csv(concat_file, header=[0, 1, 2], index_col=0)
+#                 concat_df = io_utils.fix_empty_first_row(concat_df)
+#                 print(f"Loaded concatenated file with shape: {concat_df.shape}")
+                
+#                 # Get the first seed directory with this sequence
+#                 first_seed_dir = None
+#                 for seed_dir in seed_dirs:
+#                     seed_sequence_dir = os.path.join(seed_dir, inference_dir, sequence_dir)
+#                     if os.path.exists(seed_sequence_dir):
+#                         first_seed_dir = seed_sequence_dir
+#                         break
+                
+#                 if not first_seed_dir:
+#                     print(f"Warning: Could not find seed directory for {sequence_dir}")
+#                     continue
+                
+#                 # Get list of CSV files in order - these represent the original snippets
+#                 csv_files = [
+#                     f for f in os.listdir(first_seed_dir)
+#                     if f.endswith(".csv") and not f.endswith("_uncropped.csv")
+#                 ]
+                
+#                 # Sort CSV files by their frame numbers
+#                 csv_files.sort(key=lambda x: int(os.path.splitext(x)[0].replace("img", "")))
+#                 print(f"Found {len(csv_files)} CSV files representing snippets")
+                
+#                 # Map each original image path to its position in the original sequence of files
+#                 img_to_position = {}
+#                 ordered_img_paths = []
+                
+#                 for i, csv_file in enumerate(csv_files):
+#                     base_name = os.path.splitext(csv_file)[0]
+#                     img_file = base_name + ".png"
+#                     img_path = f"labeled-data/{sequence_name}/{img_file}"
+#                     if img_path in img_paths:
+#                         img_to_position[img_path] = i
+#                         ordered_img_paths.append(img_path)
+                
+#                 print(f"Mapped {len(img_to_position)} image paths to their positions")
+                
+#                 # Sort img_paths by their position in the sequence
+#                 img_paths_ordered = sorted(img_paths, key=lambda x: img_to_position.get(x, float('inf')))
+                
+#                 # Process each snippet (51 frames each) and extract the center frame
+#                 snippet_length = 51  # Typical snippet length
+                
+#                 for i, img_path in enumerate(img_paths_ordered):
+#                     # Calculate the center frame index for this snippet
+#                     snippet_start = i * snippet_length
+#                     center_idx = snippet_start + (snippet_length // 2)
+                    
+#                     if center_idx < concat_df.shape[0]:
+#                         # Extract the center frame and set index
+#                         center_frame = concat_df.iloc[[center_idx]]
+#                         center_frame.index = [img_path]
+#                         results_list.append(center_frame)
+#                         print(f"Extracted center frame at index {center_idx} for snippet {i+1} ({img_path})")
+#                     else:
+#                         print(f"Warning: Center index {center_idx} out of bounds for {img_path}")
+                
+#             except Exception as e:
+#                 print(f"Error processing {concat_file}: {str(e)}")
+#                 print("Full error:")
+#                 import traceback
+#                 traceback.print_exc()
+#         else:
+#             print(f"Warning: Could not find concatenated file {concat_file}")
+    
+#     if results_list:
+#         print(f"\nCombining {len(results_list)} processed frames")
+#         # Combine all results in original order
+#         results_df = pd.concat(results_list)
+#         print(f"Combined DataFrame shape: {results_df.shape}")
+        
+#         # Reindex to match original
+#         results_df = results_df.reindex(original_index)
+#         print(f"Final DataFrame shape: {results_df.shape}")
+        
+#         # Add "set" column for labeled data predictions
+#         results_df.loc[:,("set", "", "")] = "train"
+        
+#         # Save predictions
+#         preds_file = os.path.join(output_dir, f'predictions_{view}_new.csv')
+#         results_df.to_csv(preds_file)
+#         print(f"Saved predictions to {preds_file}")
+        
+#         # Compute metrics
+#         cfg_lp_view = cfg_lp.copy()
+#         cfg_lp_view.data.csv_file = [f'CollectedData_{view}_new.csv']
+#         cfg_lp_view.data.view_names = [view]
+        
+#         try:
+#             compute_metrics(cfg=cfg_lp_view, preds_file=[preds_file], data_module=None)
+#             print(f"Successfully computed metrics for {preds_file}")
+#         except Exception as e:
+#             print(f"Error computing metrics for {view}: {str(e)}")
+#             print(traceback.format_exc())
+#     else:
+#         print(f"Warning: No frames processed for view {view}")
 
 
 def setup_ensemble_dirs(
@@ -551,6 +707,193 @@ def process_multiview_directory(
                 print(f"Saved EKS results for view {view} to {result_file}")
 
 
+# def process_multiview_directories_concat(
+#     views: List[str],
+#     seed_dirs: List[str],
+#     inference_dir: str,
+#     output_dir: str,
+#     mode: str,
+#     pca_object = None,
+#     fa_object = None,
+#     get_bbox_path_fn: Callable[[Path, ], Path] | None = None,
+# ) -> None:
+#     """Process all directories for a view by concatenating CSV files per directory"""
+    
+#     # Get the global FA object if none is provided
+#     if fa_object is None:
+#         fa_object = globals().get('fa_object')
+#         if fa_object is not None:
+#             print("Using global FA object for multiview processing")
+#         else:
+#             print("Warning: No FA object available for variance inflation")
+
+#     # Prepare FA parameters for inflation
+#     inflate_vars_kwargs = {}
+#     if fa_object is not None:
+#         try:
+#             loading_matrix = fa_object.components_.T
+#             mean = fa_object.mean_
+            
+#             inflate_vars_kwargs = {
+#                 'loading_matrix': loading_matrix,
+#                 'mean': np.zeros_like(mean)
+#             }
+#             print("Successfully extracted FA parameters for variance inflation")
+#         except AttributeError as e:
+#             print(f"Error extracting FA parameters: {e}. Using default inflation parameters.")
+    
+#     # Create output directories for ALL views in advance
+#     # for view in views:
+#         # view_output_dir = os.path.join(output_dir, view)
+#         # os.makedirs(view_output_dir, exist_ok=True)
+#         # print(f"Created output directory for {view}: {view_output_dir}")
+    
+#     # Get the original directory structure
+#     first_seed_dir = seed_dirs[0]
+#     video_dir = os.path.join(first_seed_dir, inference_dir)
+    
+#     # Find all directories per view and group them
+#     directories_by_view = {}
+#     for view in views:
+#         view_dirs = [d for d in os.listdir(video_dir) if view in d and os.path.isdir(os.path.join(video_dir, d))]
+#         directories_by_view[view] = view_dirs
+#         print(f"View {view} dirs: {view_dirs}")
+    
+#     # Group directories across views by their sequence name
+#     sequences = {}
+#     for view, dirs in directories_by_view.items():
+#         for dir_name in dirs:
+#             # Extract the sequence name by removing view identifier
+#             parts = dir_name.split('_')
+#             sequence_key = '_'.join([p for p in parts if p not in views])
+            
+#             if sequence_key not in sequences:
+#                 sequences[sequence_key] = {}
+            
+#             sequences[sequence_key][view] = dir_name
+    
+#     # Process each sequence
+#     for sequence_key, view_dirs in sequences.items():
+#         print(f"\nProcessing sequence: {sequence_key}")
+        
+#         # For each view in this sequence
+#         for view, dir_name in view_dirs.items():
+#             print(f"Processing view {view} directory: {dir_name}")
+            
+#             all_csv_files = []
+#             for seed_dir in seed_dirs:
+#                 seed_video_dir = os.path.join(seed_dir, inference_dir)
+#                 seed_sequence_dir = os.path.join(seed_video_dir, dir_name)
+                
+#                 if os.path.exists(seed_sequence_dir):
+#                     csv_files = [
+#                         f for f in os.listdir(seed_sequence_dir)
+#                         if f.endswith(".csv") and not f.endswith("_uncropped.csv")
+#                     ]
+                    
+#                     for csv_file in csv_files:
+#                         pred_file = os.path.join(seed_sequence_dir, csv_file)
+#                         all_csv_files.append(pred_file)
+            
+#             # Group CSV files by their ensemble member (seed)
+#             csv_files_by_seed = {}
+#             for csv_path in all_csv_files:
+#                 seed_idx = seed_dirs.index(csv_path.split(inference_dir)[0].rstrip('/'))
+#                 if seed_idx not in csv_files_by_seed:
+#                     csv_files_by_seed[seed_idx] = []
+#                 csv_files_by_seed[seed_idx].append(csv_path)
+            
+#             # Process each ensemble member's CSV files
+#             for seed_idx, csv_files in csv_files_by_seed.items():
+#                 # Sort CSV files by their frame numbers to ensure proper sequence
+#                 csv_files.sort(key=lambda x: int(os.path.splitext(os.path.basename(x))[0].replace("img", "")))
+                
+#                 # Concatenate CSV files for this ensemble member
+#                 concat_dfs = []
+#                 for csv_file in csv_files:
+#                     try:
+#                         df = pd.read_csv(csv_file, header=[0, 1, 2], index_col=0)
+#                         df = io_utils.fix_empty_first_row(df)
+#                         concat_dfs.append(df)
+#                     except Exception as e:
+#                         print(f"Error reading {csv_file}: {e}")
+                
+#                 if concat_dfs:
+#                     # Concatenate all DataFrames
+#                     concat_df = pd.concat(concat_dfs)
+                    
+#                     # Save concatenated file temporarily
+#                     temp_file = os.path.join(output_dir, f"temp_{view}_{seed_idx}_{sequence_key}.csv")
+#                     concat_df.to_csv(temp_file)
+#                     print(f"Saved concatenated file for view {view}, seed {seed_idx}: {temp_file}")
+                    
+#                     # Update all_csv_files for this seed with the concatenated file
+#                     csv_files_by_seed[seed_idx] = [temp_file]
+        
+#         # Collect all concatenated files for all views
+#         all_view_files = {}
+#         for view in views:
+#             if view in view_dirs:
+#                 view_files = []
+#                 for seed_idx in csv_files_by_seed.keys():
+#                     temp_file = os.path.join(output_dir, f"temp_{view}_{seed_idx}_{sequence_key}.csv")
+#                     if os.path.exists(temp_file):
+#                         view_files.append(temp_file)
+#                 all_view_files[view] = view_files
+        
+#         # Run EKS multiview on the concatenated files
+#         input_dfs_list = []
+#         keypoint_names = []
+        
+#         for view, files in all_view_files.items():
+#             if files:
+#                 view_dfs, kp_names = format_data(
+#                     input_source=files,
+#                     camera_names=[view]
+#                 )
+#                 if not keypoint_names:
+#                     keypoint_names = kp_names
+#                 input_dfs_list.extend(view_dfs)
+        
+#         if input_dfs_list and keypoint_names:
+#             print(f"Running EKS multiview on concatenated sequence {sequence_key}")
+#             print(f"Using {len(input_dfs_list)} input DataFrames")
+            
+#             # Run EKS multiview on concatenated data
+#             results_dfs = run_eks_multiview(
+#                 markers_list=input_dfs_list,
+#                 keypoint_names=keypoint_names,
+#                 views=views,
+#                 quantile_keep_pca=50,
+#                 pca_object=pca_object,
+#                 inflate_vars_kwargs=inflate_vars_kwargs
+#             )
+            
+#             # Save results for each view
+#             for view, result_df in results_dfs.items():
+#                 if view in view_dirs:
+#                     # Save to the view-specific directory
+#                     view_dir = view_dirs[view]
+#                     print(f"AAA the view dir is {view_dir}")
+#                     # view_output_path = os.path.join(output_dir, view, view_dir)
+#                     # os.makedirs(view_output_path, exist_ok=True)
+#                     view_output_path = os.path.join(output_dir, view_dir)
+#                     os.makedirs(view_output_path, exist_ok=True)
+
+#                     # Save concatenated results
+#                     concat_file = os.path.join(view_output_path, "concatenated_sequence.csv")
+#                     result_df.to_csv(concat_file)
+#                     print(f"Saved EKS results for view {view} to {concat_file}")
+        
+#         # Clean up temporary files
+#         for view in views:
+#             for seed_idx in range(len(seed_dirs)):
+#                 temp_file = os.path.join(output_dir, f"temp_{view}_{seed_idx}_{sequence_key}.csv")
+#                 if os.path.exists(temp_file):
+#                     os.remove(temp_file)
+#                     print(f"Removed temporary file: {temp_file}")
+
+
 
 def process_singleview_directory(
     original_dir: str,
@@ -883,7 +1226,76 @@ def post_process_ensemble_labels(
                     cfg_lp=cfg_lp
                 )
 
+# def post_process_ensemble_labels_concat(
+#     cfg_lp: DictConfig,
+#     results_dir: str,
+#     model_type: str,
+#     n_labels: int,
+#     seed_range: tuple[int, int],
+#     views: List[str], 
+#     mode: Literal['ensemble_mean', 'ensemble_median', 'eks_singleview', 'eks_multiview'],
+#     inference_dirs: List[str],
+#     overwrite: bool,
+#     pca_object = None, 
+#     fa_object = None
+# ) -> None:
+#     """Post-process ensemble labels by concatenating CSV files per directory"""
 
+#     # Use the global objects if none provided
+#     if pca_object is None:
+#         pca_object = globals().get('pca_object')
+#     if fa_object is None:
+#         fa_object = globals().get('fa_object')
+
+#     # Setup directories
+#     base_dir = os.path.dirname(results_dir)
+#     ensemble_dir, seed_dirs, _ = setup_ensemble_dirs(
+#         base_dir, model_type, n_labels, seed_range, mode, ""
+#     )
+    
+#     for inference_dir in inference_dirs:
+#         print(f"Post-processing ensemble predictions for {model_type} {n_labels} {seed_range[0]}-{seed_range[1]} for {inference_dir}")
+#         first_seed_dir = seed_dirs[0]
+#         inf_dir_in_first_seed = os.path.join(first_seed_dir, inference_dir)
+        
+#         # Check if the inference_dir inside the first_seed_dir has subdirectories
+#         entries = os.listdir(inf_dir_in_first_seed)
+#         has_subdirectories = any(os.path.isdir(os.path.join(inf_dir_in_first_seed, entry)) for entry in entries)
+        
+#         if not has_subdirectories:
+#             print(f"No subdirectories found in {inf_dir_in_first_seed}. Skipping.")
+#             continue
+            
+#         print(f"Subdirectories found in {inf_dir_in_first_seed}. Processing {inference_dir}...")
+#         output_dir = os.path.join(ensemble_dir, mode, inference_dir)
+#         os.makedirs(output_dir, exist_ok=True)
+        
+#         # Process using the new concatenation approach
+#         if mode == 'eks_multiview':
+#             # Use the new concatenation-based processing
+#             process_multiview_directories_concat(
+#                 views=views,
+#                 seed_dirs=seed_dirs,
+#                 inference_dir=inference_dir,
+#                 output_dir=output_dir,
+#                 mode=mode,
+#                 pca_object=pca_object,
+#                 fa_object=fa_object,
+#                 get_bbox_path_fn=None  # Update this if bbox handling is needed
+#             )
+            
+#             # Process final predictions for all views using the concat approach
+#             for view in views:
+#                 process_final_predictions_concat(
+#                     view=view,
+#                     output_dir=output_dir,
+#                     seed_dirs=seed_dirs,
+#                     inference_dir=inference_dir,
+#                     cfg_lp=cfg_lp
+#                 )
+#         else:
+#             # Use original implementation for other modes
+#             print(f"Mode {mode} does not use the concatenation approach. Using original implementation.")
 
 # def post_process_ensemble_videos(
 #     cfg_lp: DictConfig,
@@ -1019,107 +1431,102 @@ def post_process_ensemble_videos(
         os.makedirs(output_dir, exist_ok=True)
 
         if mode == 'eks_multiview':
-            # For EKS multiview, we need to handle all views together for each video
+            # For EKS multiview, we need to find files for each view and group them by video
             files = [f for f in os.listdir(inf_dir_in_first_seed) if f.endswith('.csv')]
             
-            # Get all CSV files from the first seed directory
-            # Group by common prefix before view name (assuming format is something like prefix_view.csv)
-            video_groups = {}
-            
-            # First, group by file naming pattern
-            for file in files:
-                found_view = None
+            # Group files by view
+            files_by_view = {view: [] for view in views}
+            for f in files:
                 for view in views:
-                    if view in file:
-                        found_view = view
+                    if view in f:
+                        files_by_view[view].append(f)
                         break
-                
-                if found_view:
-                    # Try to extract a video identifier from the filename
-                    parts = file.split(f"_{found_view}")
-                    video_prefix = parts[0]
-                    
-                    if not video_prefix:
-                        # If view is at the beginning, use the part after it
-                        if len(parts) > 1:
-                            video_prefix = parts[1]
-                        else:
-                            video_prefix = "unknown"
-                    
-                    if video_prefix not in video_groups:
-                        video_groups[video_prefix] = {}
-                    
-                    video_groups[video_prefix][found_view] = file
             
-            # If grouping failed, try simpler approaches
-            if not video_groups:
-                # If we have exactly one file per view, assume they're all for the same video
-                if all(sum(1 for f in files if view in f) == 1 for view in views):
-                    video_groups["single_video"] = {}
-                    for view in views:
-                        for f in files:
-                            if view in f:
-                                video_groups["single_video"][view] = f
-                                break
+            # Find all unique video names by parsing filenames
+            video_to_view_files = {}
             
-            print(f"Identified {len(video_groups)} videos to process")
+            # First, try to extract the "base" video name from each file
+            for view, view_files in files_by_view.items():
+                for file in view_files:
+                    # Try to find a video key by removing view name and extension
+                    parts = file.replace('.csv', '').split('_')
+                    
+                    # Find which part is the view
+                    view_idx = -1
+                    for i, part in enumerate(parts):
+                        if part == view:
+                            view_idx = i
+                            break
+                    
+                    if view_idx >= 0:
+                        # Create video key by joining all parts except the view
+                        video_key = '_'.join(parts[:view_idx] + parts[view_idx+1:])
+                    else:
+                        # If view is not an exact match, remove any part containing the view name
+                        video_key = '_'.join([p for p in parts if view not in p])
+                    
+                    # If empty, use whole filename without extension as fallback
+                    if not video_key:
+                        video_key = file.replace('.csv', '')
+                    
+                    if video_key not in video_to_view_files:
+                        video_to_view_files[video_key] = {}
+                    
+                    video_to_view_files[video_key][view] = file
             
             # Process each video separately
-            for video_prefix, view_files in video_groups.items():
+            for video_key, view_files in video_to_view_files.items():
                 available_views = list(view_files.keys())
                 
                 if len(available_views) < 2:
-                    print(f"Not enough views for video {video_prefix}. Found: {available_views}. Need at least 2 views.")
+                    print(f"Not enough views for video {video_key}. Need at least 2 views.")
                     continue
                 
-                print(f"Processing video {video_prefix} with views: {available_views}")
+                print(f"Processing video {video_key} with views: {available_views}")
                 
-                # Collect all prediction files for this video across views and seeds
+                # Collect prediction files for all views and seeds
                 all_pred_files = []
                 
                 for view in available_views:
-                    filename = view_files[view]
+                    file_name = view_files[view]
+                    pred_files_for_view = []
+                    
                     for seed_dir in seed_dirs:
-                        pred_file = os.path.join(seed_dir, inference_dir, filename)
+                        pred_file = os.path.join(seed_dir, inference_dir, file_name)
                         if os.path.exists(pred_file):
-                            all_pred_files.append(pred_file)
+                            pred_files_for_view.append(pred_file)
+                    
+                    if pred_files_for_view:
+                        all_pred_files.extend(pred_files_for_view)
+                    else:
+                        print(f"No prediction files found for view {view}, file {file_name}")
                 
                 if not all_pred_files:
-                    print(f"No prediction files found for video {video_prefix}")
+                    print(f"No prediction files found for video {video_key}")
                     continue
                 
-                # Process with multiview EKS
-                try:
-                    input_dfs_list, keypoint_names = format_data(
-                        input_source=all_pred_files,
-                        camera_names=available_views,
-                    )
-                    
-                    # Print debugging information
-                    print(f"Formatted {len(input_dfs_list)} dataframes for keypoints: {keypoint_names}")
-                    
-                    # Run multiview EKS
-                    results_dfs = run_eks_multiview(
-                        markers_list=input_dfs_list,
-                        keypoint_names=keypoint_names,
-                        views=available_views,
-                    )
-                    
-                    # Save results for each view
-                    for view in available_views:
-                        if view in results_dfs:
-                            result_df = results_dfs[view]
-                            result_file = os.path.join(output_dir, view_files[view])
-                            result_df.to_csv(result_file)
-                            print(f"Saved EKS multiview predictions for view {view} to {result_file}")
-                        else:
-                            print(f"Warning: No results generated for view {view}")
-                except Exception as e:
-                    print(f"Error processing video {video_prefix}: {str(e)}")
-                    import traceback
-                    traceback.print_exc()
+                # Process ensemble data
+                input_dfs_list, keypoint_names = format_data(
+                    input_source=all_pred_files,
+                    camera_names=available_views,
+                )
+                
+                # Run multiview EKS
+                results_dfs = run_eks_multiview(
+                    markers_list=input_dfs_list,
+                    keypoint_names=keypoint_names,
+                    views=available_views,
+                )
+                
+                # Save results for each view
+                for view in available_views:
+                    if view in results_dfs:
+                        result_df = results_dfs[view]
+                        result_file = os.path.join(output_dir, view_files[view])
+                        result_df.to_csv(result_file)
+                        print(f"Saved EKS multiview predictions for view {view} to {result_file}")
         else:
-            # Process each view separately for other modes
+            # Process each view separately
             for view in views:
                 process_single_video_view(
                     view=view,
@@ -1224,7 +1631,7 @@ def run_eks_multiview(
         s_frames = [(None,None)], # Keemin wil fix 
         avg_mode = avg_mode,
         var_mode = var_mode,
-        inflate_vars = True,
+        inflate_vars = False,
         inflate_vars_kwargs = inflate_vars_kwargs,
         verbose = verbose,
         pca_object = pca_object,

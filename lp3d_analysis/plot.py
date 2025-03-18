@@ -27,6 +27,10 @@ plot_colors = {
     'eks_multiview_smooth_pca_mean':  'lightcoral', # kind of purple 
     'eks_multiview_quantile_50': 'pink',
     'eks_multiview_varinf_quantile_50': 'lightcoral',
+    'eks_multiview_varinf_con': 'lightcoral',
+    'eks_multiview_varinf_con_50': 'lightcoral',
+    'eks_multiview_varinf_postpred': 'lightcoral',
+    'eks_multiview_postpred': 'green',
     
 }
 
