@@ -8,32 +8,56 @@ import matplotlib.pyplot as plt
 
 
 plot_colors = {
+    
     'eks_singleview': 'blue',
     'eks_multiview': 'green',
-    'eks_multiview_varinf': '#FF1493',
-    'rngs': 'red',
-    'ensemble_median': 'purple',
-    'ensemble_mean': 'orange',
+    'eks_multiview_varinf': 'limegreen',
+    # 'rngs': 'red',
+    'rngs': 'gray', # in general gray
+    'ensemble_median': 'orange',
+    'ensemble_mean': 'purple',
     'ensemble_variance': 'brown',
     'labels': '#FFD700', #(Bright Gold)
     'pca_reprojection': 'pink',
-    'eks_multiview_smooth':  'green',
+
+  
+
+    'eks_multiview_varinf_postpred': 'limegreen',
+    'eks_multiview_postpred': 'green',
+    'eks_multiview_varinf_concat': 'limegreen',
+    'eks_multiview_concat': 'green',
+    'eks_multiview_no_object':  'lightcoral',
+    'eks_multiview_no_object_100':  'brown',
+    'eks_multiview_varinf_no_object':  'teal',
+
+
+
+    # varinf releated + smoothing oprions 
+    'eks_multiview_smooth':  'lightcoral',
     'eks_multiview_varinf_smooth': 'brown', 
     'eks_multiview_10000':  '#FFD700',
     'eks_multiview_varinf_10000': 'brown', 
     'eks_multiview_pca_mean':  'brown',
     'eks_multiview_quantile_100':  'teal', 
     'eks_multiview_varinf_quantile_100': 'blue',
-    'eks_multiview_varinf_pca_mean':  '#FFD700',
-    'eks_multiview_smooth_pca_mean':  'lightcoral', # kind of purple 
-    'eks_multiview_quantile_50': 'pink',
-    'eks_multiview_varinf_quantile_50': 'lightcoral',
-    'eks_multiview_varinf_con': 'lightcoral',
-    'eks_multiview_varinf_con_50': 'lightcoral',
-    'eks_multiview_varinf_postpred': 'lightcoral',
-    'eks_multiview_postpred': 'green',
+
+    'ens_med_anipose':  'blue',
+
     
+    
+
+
+
+    
+    # 'eks_multiview_postpred_3pcs_old': 'lightcoral',
+
+
+    # 'eks_multiview_quantile_50': 'pink',
+    # 'eks_multiview_varinf_quantile_50': 'lightcoral',
+    # 'eks_multiview_varinf_pca_mean':  '#FFD700',
+    # 'eks_multiview_smooth_pca_mean':  'lightcoral', # kind of purple 
 }
+
 
 
 def find_prediction_files(directory, view_name):
@@ -141,7 +165,7 @@ def generate_paths_with_models_and_ensembles(
             print(base_dir)
             matching_files = find_prediction_files(base_dir, view)
             if matching_files:
-                view_data[seed] = matching_files[0]
+                view_data[seed] = matching_files[0] # it was matching_files[0]
         
         # Add ensemble predictions
         if ensemble_methods is not None and ensemble_seed is not None:
@@ -158,7 +182,7 @@ def generate_paths_with_models_and_ensembles(
                 )
                 matching_files = find_prediction_files(base_dir, view)
                 if matching_files:
-                    view_data[method] = matching_files[0]
+                    view_data[method] = matching_files[0] # it was matching_files[0]
         
         file_paths[view] = view_data
     

@@ -11,7 +11,7 @@ from typing import List, Literal, Tuple, Dict, Any
 from pathlib import Path
 
 from lightning_pose.utils import io as io_utils
-from lightning_pose.utils.cropzoom import generate_cropped_csv_file
+# from lightning_pose.utils.cropzoom import generate_cropped_csv_file # the old generated csv file
 from lightning_pose.utils.scripts import (
     compute_metrics,
 )
@@ -29,44 +29,46 @@ from eks.marker_array import MarkerArray, input_dfs_to_markerArray
 This is loading the pca and FA objects - we will probably not use it like that later 
 '''
 
-pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_fly.pkl"
+
 # pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_mirror-mouse-separate.pkl"
-# pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_chickadee-crop.pkl"
-fa_model_path = "/teamspace/studios/this_studio/fa_object_inD_fly.pkl"
-# fa_model_path = "/teamspace/studios/this_studio/pca_object_inD_mirror-mouse-separate.pkl"
-# fa_model_path = "/teamspace/studios/this_studio/pca_object_inD_chickadee-crop.pkl"
+# pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_fly.pkl"
+# pca_model_path = "/teamspace/studios/this_studio/pca_object_ooD_chickadee-crop_6pcs_new.pkl"
 
-#Custom function to force pickle to find NaNPCA2 in pca_global
-class CustomUnpickler(pickle.Unpickler):
-    def find_class(self, module, name):
-        if name == "NaNPCA":
-            from lightning_pose.utils.pca import  NaNPCA
-            return NaNPCA
-        elif name == "EnhancedFactorAnalysis":
-            from lp3d_analysis.pca_global import EnhancedFactorAnalysis
-            return EnhancedFactorAnalysis
-        return super().find_class(module, name)
+# # # # # fa_model_path = "/teamspace/studios/this_studio/pca_object_inD_mirror-mouse-separate.pkl"
+# fa_model_path = "/teamspace/studios/this_studio/fa_object_inD_fly.pkl"
+# fa_model_path = "/teamspace/studios/this_studio/pca_object_inD_chickadee-crop_6pcs.pkl"
 
-# Load PCA object before defining functions
-try:
-    with open(pca_model_path, "rb") as f:
-        pca_object = CustomUnpickler(f).load()
-    print(f"PCA model loaded successfully from {pca_model_path}.")
-except AttributeError as e:
-    print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
-except FileNotFoundError as e:
-    print(f"Skipping loading pca_object from {pca_model_path}:")
-    print(e)
+# # Custom function to force pickle to find NaNPCA2 in pca_global
+# class CustomUnpickler(pickle.Unpickler):
+#     def find_class(self, module, name):
+#         if name == "NaNPCA":
+#             from lightning_pose.utils.pca import  NaNPCA
+#             return NaNPCA
+#         elif name == "EnhancedFactorAnalysis":
+#             from lp3d_analysis.pca_global import EnhancedFactorAnalysis
+#             return EnhancedFactorAnalysis
+#         return super().find_class(module, name)
 
-try:
-    with open(fa_model_path, "rb") as f:
-        fa_object = CustomUnpickler(f).load()
-    print(f"PCA model loaded successfully from {fa_model_path}. for the purpose of variance inflation.")
-except AttributeError as e:
-    print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
-except FileNotFoundError as e:
-    print(f"Skipping loading pca_object from {fa_model_path}:")
-    print(e)
+# # Load PCA object before defining functions
+# try:
+#     with open(pca_model_path, "rb") as f:
+#         pca_object = CustomUnpickler(f).load()
+#     print(f"PCA model loaded successfully from {pca_model_path}.")
+# except AttributeError as e:
+#     print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
+# except FileNotFoundError as e:
+#     print(f"Skipping loading pca_object from {pca_model_path}:")
+#     print(e)
+
+# try:
+#     with open(fa_model_path, "rb") as f:
+#         fa_object = CustomUnpickler(f).load()
+#     print(f"PCA model loaded successfully from {fa_model_path}. for the purpose of variance inflation.")
+# except AttributeError as e:
+#     print(f"Error loading PCA model: {e}. Ensure NaNPCA2 is correctly imported from pca_global.py.")
+# except FileNotFoundError as e:
+#     print(f"Skipping loading pca_object from {fa_model_path}:")
+#     print(e)
 
 # # Load FA object before defining functions
 # try:
@@ -76,6 +78,54 @@ except FileNotFoundError as e:
 # except AttributeError as e:
 #     print(f"Error loading FA model: {e}. Ensure EnhancedFactorAnalysis is correctly imported from pca_global.py.")
 
+
+
+def generate_cropped_csv_file(
+    input_csv_file: str | Path,
+    input_bbox_file: str | Path,
+    output_csv_file: str | Path,
+    img_height: int | None = None,
+    img_width: int | None = None,
+    mode: str = "subtract",
+):
+    """Translate a CSV file by bbox file.
+    Requires the files have the same index.
+
+    Defaults to subtraction. Can use mode='add' to map from cropped to original space.
+    """
+    if mode not in ("add", "subtract"):
+        raise ValueError(f"{mode} is not a valid mode")
+    # Read csv file from pose_model.cfg.data.csv_file
+    # TODO: reuse header_rows logic from datasets.py
+    csv_data = pd.read_csv(input_csv_file, header=[0, 1, 2], index_col=0)
+    csv_data = io_utils.fix_empty_first_row(csv_data)
+
+    bbox_data = pd.read_csv(input_bbox_file, index_col=0)
+
+    for col in csv_data.columns:
+        if col[-1] in ("x", "y"):
+            vals = csv_data[col]
+            
+            if mode == "add":
+                if col[-1] == "x" and img_width:
+                    vals = (vals / img_width) * bbox_data["w"]
+                elif col[-1] == "y" and img_height:
+                    vals = (vals / img_height) * bbox_data["h"]
+                
+            if mode == "subtract":
+                csv_data[col] = vals - bbox_data[col[-1]]
+            else:
+                csv_data[col] = vals + bbox_data[col[-1]]
+
+            if mode == "subtract":
+                if col[-1] == "x" and img_width:
+                    csv_data[col] = (csv_data[col] / bbox_data["w"]) * img_width 
+                elif col[-1] == "y" and img_height:
+                    csv_data[col] = (csv_data[col] / bbox_data["h"]) * img_height
+
+    output_csv_file = Path(output_csv_file)
+    output_csv_file.parent.mkdir(parents=True, exist_ok=True)
+    csv_data.to_csv(output_csv_file)
 
 
 def process_predictions(pred_file: str, include_likelihood = True, include_variance = False, include_posterior_variance = False, column_structure=None):
@@ -444,7 +494,7 @@ def prepare_uncropped_csv_files(csv_files: list[str], get_bbox_path_fn: Callable
         # Save as _uncropped.csv version of preds_file.
         remapped_p = p.with_stem(p.stem + "_uncropped")
         csv_files_uncropped.append(str(remapped_p))
-        generate_cropped_csv_file(p, bbox_path, remapped_p, mode="add")
+        generate_cropped_csv_file(p, bbox_path, remapped_p, img_height = 320, img_width = 320, mode="add")
 
     return csv_files_uncropped
 
@@ -464,18 +514,10 @@ def process_multiview_directory(
 ) -> None:
     """Process a multiview directory for EKS multiview mode"""
 
-    # Get the global FA object if none is provided
-    if fa_object is None:
-        fa_object = globals().get('fa_object')
-        if fa_object is not None:
-            print("Using global FA object for multiview processing")
-        else:
-            print("Warning: No FA object available for variance inflation")
-
-    # if fa_object is not None:
-    #     print("Using FA object for variance inflation")
-    # else:
-    #     print("No FA object available for variance inflation - we are in process_multiview_directory")
+    if fa_object is not None:
+        print("Using FA object for variance inflation")
+    else:
+        print("No FA object available for variance inflation - we are in process_multiview_directory")
 
     # Create output directories for ALL views in advance
     for view in views:
@@ -489,6 +531,7 @@ def process_multiview_directory(
     inflate_vars_kwargs = {}
     if fa_object is not None:
         # Extract loading matrix and mean from the FA object
+        print("Extracting FA parameters for variance inflation")
         try:
             loading_matrix = fa_object.components_.T  # Typically the loading matrix is the transpose of components_
             mean = fa_object.mean_
@@ -540,7 +583,7 @@ def process_multiview_directory(
                 markers_list=input_dfs_list,
                 keypoint_names=keypoint_names,
                 views=views,
-                quantile_keep_pca=100, # this is for the labeled frames
+                quantile_keep_pca=50, # this is for the labeled frames
                 pca_object=pca_object,
                 inflate_vars_kwargs=inflate_vars_kwargs
             )
@@ -563,8 +606,9 @@ def process_multiview_directory(
 
                 # Crop the multiview-eks output back to original cropped coordinate space.
                 if all_pred_files_uncropped is not None:
+                    print(f"Generating cropped CSV file for {view}")
                     bbox_path = get_bbox_path_fn(result_file)
-                    generate_cropped_csv_file(uncropped_result_file, bbox_path, result_file, mode="subtract")
+                    generate_cropped_csv_file(uncropped_result_file, bbox_path, result_file, img_height = 320, img_width = 320, mode="subtract")
 
                 print(f"Saved EKS results for view {view} to {result_file}")
 
@@ -635,62 +679,6 @@ def process_singleview_directory(
             results_df.to_csv(result_file)
             print(f"Saved ensemble {mode} predictions to {result_file}")
 
-# def process_single_video_view(
-#     view: str,
-#     seed_dirs: List[str],
-#     inference_dir: str,
-#     output_dir: str,
-#     mode: str
-# ) -> None:
-#     """Process a single video view"""
-#     stacked_arrays = []
-#     stacked_dfs = []
-#     column_structure = None
-#     keypoint_names = []
-#     df_index = None
-#     pred_files = []
-    
-#     # Collect prediction files for this view across all seeds
-#     for seed_dir in seed_dirs:
-#         base_files = os.listdir(os.path.join(seed_dir, inference_dir))
-#         csv_files = [f for f in base_files if view in f]
-        
-#         # Assert that there's only one matching file
-#         assert len(csv_files) == 1, f"Expected 1 file for view {view}, found {len(csv_files)}"
-        
-#         pred_file = os.path.join(seed_dir, inference_dir, csv_files[0])
-#         pred_files.append(pred_file)
-    
-#     # Process ensemble data
-#     input_dfs_list, keypoint_names = format_data(
-#         input_source=pred_files,
-#         camera_names=None,
-#     )
-    
-#     column_structure, _, _, _, _ = process_predictions(pred_files[0])
-    
-#     # Process based on mode
-#     if mode in ['ensemble_mean', 'ensemble_median']:
-#         results_df = process_ensemble_frames(pred_files, keypoint_names, mode=mode)
-#     elif mode == 'eks_singleview':
-#         results_df = run_eks_singleview(
-#             markers_list=input_dfs_list,
-#             keypoint_names=keypoint_names
-#         )
-#     else:
-#         print(f"Invalid mode: {mode}")
-#         return
-    
-#     # Save results using the same filename pattern
-#     base_files = os.listdir(os.path.join(seed_dirs[0], inference_dir))
-#     csv_files = [f for f in base_files if view in f]
-    
-#     if csv_files:
-#         base_name = csv_files[0]
-#         preds_file = os.path.join(output_dir, base_name)
-#         results_df.to_csv(preds_file)
-#         print(f"Saved ensemble {mode} predictions for {view} view to {preds_file}")
-
 
 def process_single_video_view(
     view: str,
@@ -754,8 +742,6 @@ def process_single_video_view(
 
 
 
-
-
 def post_process_ensemble_labels(
     cfg_lp: DictConfig,
     results_dir: str,
@@ -771,27 +757,39 @@ def post_process_ensemble_labels(
 ) -> None:
     """Post-process ensemble labels"""
 
-    # Use the global pca_object if none is provided explicitly
-    if pca_object is None:
-        # Use the global pca_object defined at the module level
-        pca_object = globals().get('pca_object')
-        if pca_object is not None:
-            print("Using global PCA object for post-processing")
-        else:
-            print("No PCA object available for post-processing")
     
-    # Use the global fa_object if none is provided explicitly
-    if fa_object is None:
-        fa_object = globals().get('fa_object')
-        if fa_object is not None:
-            print("Using global FA object for post-processing")
+    # Load PCA object if it doesn't exist
+    if pca_object is None:
+        # Check if it exists in the global scope
+        global_pca = globals().get('pca_object')
+        if global_pca is not None:
+            pca_object = global_pca
+            print("Loaded PCA object from global scope")
         else:
-            print("No FA object available for post-processing")
+            # Try to load from the file
+            try:
+                with open(pca_model_path, "rb") as f:
+                    pca_object = CustomUnpickler(f).load()
+                print(f"Loaded PCA model from {pca_model_path} and the PCA components shape: {pca_object.components_.shape} ")
+            except Exception as e:
+                print(f"Could not load PCA model: {e}")
+    
+    
+    if fa_object is None:
+        global_fa = globals().get('fa_object')
+        if fa_object is not None:
+            fa_object = global_fa
+            print("Loaded FA object from global scope")
+            print("Using FA object for variance inflation")
+        else:
+            # Try to load from the file
+            try:
+                with open(fa_model_path, "rb") as f:
+                    fa_object = CustomUnpickler(f).load()
+                print(f"Loaded FA model from {fa_model_path} and the FA components shape: {fa_object.components_.shape} ")
+            except Exception as e:
+                print(f"Could not load FA model: {e}")
 
-    # if fa_object is not None:
-    #     print("Using FA object for variance inflation")
-    # else:
-    #     print("No FA object available for variance inflation we are in post_process_ensemble_labels")
 
     # Setup directories
     base_dir = os.path.dirname(results_dir)
@@ -893,104 +891,6 @@ def post_process_ensemble_labels(
 
 
 
-# def post_process_ensemble_videos(
-#     cfg_lp: DictConfig,
-#     results_dir: str,
-#     model_type: str,
-#     n_labels: int,
-#     seed_range: tuple[int, int],
-#     views: list[str], 
-#     mode: Literal['ensemble_mean', 'ensemble_median', 'eks_singleview', 'eks_multiview'],
-#     inference_dirs: List[str],
-#     overwrite: bool,
-# ) -> None:
-#     """Post-process ensemble videos"""
-#     # Setup directories
-#     base_dir = os.path.dirname(results_dir)
-#     ensemble_dir, seed_dirs, _ = setup_ensemble_dirs(
-#         base_dir, model_type, n_labels, seed_range, mode, ""
-#     )
-    
-#     for inference_dir in inference_dirs:
-#         print(f"Post-processing ensemble predictions for {model_type} {n_labels} {seed_range[0]}-{seed_range[1]} for {inference_dirs}")
-#         first_seed_dir = seed_dirs[0]
-#         inf_dir_in_first_seed = os.path.join(first_seed_dir, inference_dir)
-        
-#         # Check if the inference_dir contains ANY subdirectories
-#         entries = os.listdir(inf_dir_in_first_seed)
-#         contains_subdirectory = any(os.path.isdir(os.path.join(inf_dir_in_first_seed, entry)) for entry in entries)
-        
-#         if contains_subdirectory:
-#             print(f"Found subdirectories in {inf_dir_in_first_seed}. Skipping.")
-#             continue  # Skip if there are any subdirectories
-        
-#         print(f"Directory contains only files. Processing {inference_dir}...")
-#         output_dir = os.path.join(ensemble_dir, mode, inference_dir)
-#         os.makedirs(output_dir, exist_ok=True)
-
-#         if mode == 'eks_multiview':
-#             # Process multiview case for videos
-#             input_dfs_list = []
-#             view_indices = {}
-#             all_pred_files = []
-
-#             # Collect files for all views and seeds
-#             for view in views:
-#                 print(f"Processing view: {view}")
-#                 pred_files_for_view = []
-                
-#                 for seed_dir in seed_dirs:
-#                     base_files = os.listdir(os.path.join(seed_dir, inference_dir))
-#                     pred_files = [
-#                         os.path.join(seed_dir, inference_dir, f)
-#                         for f in base_files 
-#                         if view in f 
-#                     ]
-#                     pred_files_for_view.extend(pred_files)
-
-#                 if pred_files_for_view:
-#                     # Get sample dataframe to extract indices
-#                     sample_df = pd.read_csv(pred_files_for_view[0], header=[0, 1, 2], index_col=0)
-#                     sample_df = io_utils.fix_empty_first_row(sample_df) # I don't necessarily need here
-#                     view_indices[view] = sample_df.index.tolist()
-#                     all_pred_files.extend(pred_files_for_view)
-            
-#             # Process ensemble data
-#             if all_pred_files:
-#                 input_dfs_list, keypoint_names = format_data(
-#                     input_source=all_pred_files,
-#                     camera_names=views,
-#                 )
-                
-#                 # Run multiview EKS
-#                 results_dfs = run_eks_multiview(
-#                     markers_list=input_dfs_list,
-#                     keypoint_names=keypoint_names,
-#                     views=views,
-#                 )
-
-#                 # Save results for each view
-#                 for view in views:
-#                     result_df = results_dfs[view]
-#                     base_files = os.listdir(os.path.join(seed_dirs[0], inference_dir))
-#                     csv_files = [f for f in base_files if view in f]
-                    
-#                     if csv_files:
-#                         base_name = csv_files[0]
-#                         preds_file = os.path.join(output_dir, base_name)
-#                         result_df.to_csv(preds_file)
-#                         print(f"Saved ensemble {mode} predictions for {view} view to {preds_file}")
-#         else:
-#             # Process each view separately
-#             for view in views:
-#                 process_single_video_view(
-#                     view=view,
-#                     seed_dirs=seed_dirs,
-#                     inference_dir=inference_dir,
-#                     output_dir=output_dir,
-#                     mode=mode
-#                 )
-
 def post_process_ensemble_videos(
     cfg_lp: DictConfig,
     results_dir: str,
@@ -1080,7 +980,7 @@ def post_process_ensemble_videos(
                     # Crop the multiview-eks output back to original cropped coordinate space.
                     if all_pred_files_uncropped is not None:
                         bbox_path = _get_bbox_path_fn(result_file, Path(results_dir), Path(cfg_lp.data.data_dir))
-                        generate_cropped_csv_file(uncropped_result_file, bbox_path, result_file, mode="subtract")
+                        generate_cropped_csv_file(uncropped_result_file, bbox_path, result_file, img_height = 320, img_width = 320, mode="subtract")
 
                     print(f"Saved ensemble {mode} predictions for {view} view to {result_file}")
         else:
@@ -1192,11 +1092,13 @@ def run_eks_multiview(
         s_frames = [(None,None)], # Keemin wil fix 
         avg_mode = avg_mode,
         var_mode = var_mode,
-        inflate_vars = True,
+        inflate_vars = False,
         inflate_vars_kwargs = inflate_vars_kwargs,
+        n_latent = 3,
         verbose = verbose,
         pca_object = pca_object,
     )
+
 
 
     # Process results for each view

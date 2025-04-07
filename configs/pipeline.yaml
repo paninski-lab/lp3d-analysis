@@ -44,6 +44,7 @@ train_networks:
     - videos-for-each-labeled-frame
     # - videos_debug
     # - videos_ind
+    # - videos_paper 
 
 
   # training parameters
@@ -105,4 +106,4 @@ visualization:
     overwrite: False
 
   
-# remember that we will have to run it over view 
+
