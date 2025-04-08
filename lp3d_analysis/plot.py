@@ -42,12 +42,6 @@ plot_colors = {
     'eks_multiview_varinf_quantile_100': 'blue',
 
     'ens_med_anipose':  'blue',
-
-    
-    
-
-
-
     
     # 'eks_multiview_postpred_3pcs_old': 'lightcoral',
 

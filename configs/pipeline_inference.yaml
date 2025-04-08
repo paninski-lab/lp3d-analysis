@@ -1,8 +1,8 @@
 #TODO 
 # ask Matt about adding the views variable to the config file so we can pick the views that we have and in that way instead of iterating over files we will iterate over views - which will determine things
 
-dataset_name: chickadee-crop
-# dataset_name: fly-anipose
+# dataset_name: chickadee-crop
+dataset_name: fly-anipose
 # dataset_name: mirror-mouse-separate
 
 lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_${dataset_name}.yaml
@@ -37,14 +37,14 @@ train_networks:
     - 100
   # model type
   model_types:
-    - supervised
-    # - context
+    # - supervised
+    - context
     # - semisupervised
   # run inference on videos in these directories (independent of training videos)
   inference_dirs:
     # - videos_new
     - videos-for-each-labeled-frame
-    # - videos_debug
+    - videos_debug
     # - videos_ind
     # - videos_paper
 
@@ -65,32 +65,32 @@ train_networks:
 post_processing_labels:
 
   eks_singleview:
-    run: False
-    overwrite: False
+    run: True
+    overwrite: True
   eks_multiview:
     run: True
     overwrite: True
   ensemble_mean:
-    run: False
-    overwrite: False
+    run: True
+    overwrite: True
   ensemble_median:
-    run: False
-    overwrite: False 
+    run: True
+    overwrite: True 
 
 post_processing_videos:
 
   eks_singleview:
-    run: False
-    overwrite: False
+    run: True
+    overwrite: True
   eks_multiview:
-    run: False
-    overwrite: False
+    run: True
+    overwrite: True
   ensemble_mean:
-    run: False
-    overwrite: False
+    run: True
+    overwrite: True
   ensemble_median:
-    run: False
-    overwrite: False
+    run: True
+    overwrite: True
 
 
 

@@ -23,7 +23,6 @@ from eks.utils import convert_lp_dlc, format_data, make_dlc_pandas_index
 from eks.core import jax_ensemble
 from eks.marker_array import MarkerArray, input_dfs_to_markerArray
 
-# from lp3d_analysis.pca_global import ensemble_kalman_smoother_multicam2 
 
 '''
 This is loading the pca and FA objects - we will probably not use it like that later 
