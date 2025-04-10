@@ -53,3 +53,5 @@ def collect_files_by_token(files: list[Path], tokens: list[str]) -> dict[str, li
             raise ValueError(f"File not found for token: {token}")
 
     return files_by_token
+
+

@@ -2,29 +2,38 @@ import os
 import pandas as pd
 import numpy as np
 import pickle 
+import traceback
 
-from typing import Optional, Union, Callable
-
-from lp3d_analysis import io
 from omegaconf import DictConfig
-from typing import List, Literal, Tuple, Dict, Any 
+from typing import Optional, Union, Callable, List, Literal, Tuple, Any
 from pathlib import Path
 
+from lp3d_analysis import io
+from lp3d_analysis.utils import(
+    setup_ensemble_dirs,
+    get_original_structure,
+    add_variance_columns,
+    fill_ensemble_results,
+    process_predictions,
+    process_final_predictions,
+)   
+
 from lightning_pose.utils import io as io_utils
-# from lightning_pose.utils.cropzoom import generate_cropped_csv_file
-from lightning_pose.utils.scripts import (
-    compute_metrics,
-)
+
+from eks.singlecam_smoother import ensemble_kalman_smoother_singlecam, fit_eks_singlecam
+#     compute_metrics,
+# )
 
 from eks.singlecam_smoother import ensemble_kalman_smoother_singlecam, fit_eks_singlecam
 from eks.multicam_smoother import ensemble_kalman_smoother_multicam
-from eks.utils import convert_lp_dlc, format_data, make_dlc_pandas_index
+from eks.utils import  format_data  # convert_lp_dlc, make_dlc_pandas_index
 from eks.core import jax_ensemble
 from eks.marker_array import MarkerArray, input_dfs_to_markerArray
 
+
 # loading pca objects and fa objects if necessart
 # pca_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_mirror-mouse-separate.pkl"
-pca_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_fly.pkl"
+# pca_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_fly.pkl"
 # pca_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_chickadee-crop_6pcs_new.pkl"
 
 # fa_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_mirror-mouse-separate.pkl"
@@ -83,247 +92,11 @@ if 'pca_model_path' in locals() and pca_model_path:
 if 'fa_model_path' in locals() and fa_model_path:
     _, fa_object = load_models(fa_path=fa_model_path)
 
-
-def process_predictions(pred_file: str, include_likelihood = True, include_variance = False, include_posterior_variance = False, column_structure=None):
-    """
-    Process predictions from a CSV file and return relevant data structures.
-    
-    Args:
-        pred_file (str): Path to the prediction CSV file
-        include_likelihood (bool): Whether to include likelihood values in the selected coordinates 
-        include_variance (bool): Whether to include ensemble variances in the selected coordinates
-        column_structure: Existing column structure (if any)
-        
-    Returns:
-        tuple: (column_structure, array_data, numeric_cols, keypoint_names, df_index)
-               Returns (None, None, None, None, None) if file doesn't exist
-    """
-    keypoint_names = []  # Initialize keypoint_names 
-
-    if not os.path.exists(pred_file):
-        print(f"Warning: Could not find predictions file: {pred_file}")
-        return None, None, None, None, None
-        
-    df = pd.read_csv(pred_file, header=[0, 1, 2], index_col=0)
-    df = io_utils.fix_empty_first_row(df)  # Add this line
-
-    # Select column structure: Default includes 'x', 'y', and 'likelihood' and I want to load ensemble variances if I can 
-    # selected_coords = ['x', 'y', 'likelihood'] if include_likelihood else ['x', 'y']
-    selected_coords = ['x', 'y'] # check that it works  really 
-    if include_likelihood:
-        selected_coords.append('likelihood')
-    if include_variance:
-        selected_coords.extend(['x_ens_var', 'y_ens_var'])
-    elif include_posterior_variance:
-        selected_coords.extend(['x_posterior_var', 'y_posterior_var'])
-    
-    if column_structure is None:
-        column_structure = df.loc[:, df.columns.get_level_values(2).isin(selected_coords)].columns
-    keypoint_names = list(dict.fromkeys(column_structure.get_level_values(1)))
-    print(f'Keypoint names are {keypoint_names}')
-    model_name = df.columns[0][0]
-    numeric_cols = df.loc[:, column_structure]
-    print(f"numeric_cols are {numeric_cols}")
-    array_data = numeric_cols.to_numpy()
-    
-    return column_structure, array_data, numeric_cols, keypoint_names, df.index
-
-def process_final_predictions(
-    view: str,
-    output_dir: str,
-    seed_dirs: List[str],
-    inference_dir: str,
-    cfg_lp: DictConfig,
-    use_concatenated: bool = False
-) -> None:
-    """
-    Process and save final predictions for a view, computing metrics.
-    
-    Args:
-        view: The camera view name.
-        output_dir: Directory where outputs will be saved.
-        seed_dirs: List of seed directories.
-        inference_dir: Directory name containing inference results.
-        cfg_lp: Configuration dictionary.
-        use_concatenated: If True, process concatenated snippets; if False, process individual snippets.
-    """
-    # Load original CSV file to get frame paths
-    orig_pred_file = os.path.join(seed_dirs[0], inference_dir, f'predictions_{view}_new.csv')
-    original_df = pd.read_csv(orig_pred_file, header=[0, 1, 2], index_col=0)
-    original_df = io_utils.fix_empty_first_row(original_df)
-    original_index = original_df.index
-    
-    results_list = []
-    
-    if use_concatenated:
-        # Group image paths by their directories for concatenated processing
-        image_paths_by_dir = {}
-        for img_path in original_index:
-            # Get sequence name (directory)
-            sequence_name = img_path.split('/')[1]  # e.g., "180623_000_bot"
-            if sequence_name not in image_paths_by_dir:
-                image_paths_by_dir[sequence_name] = []
-            image_paths_by_dir[sequence_name].append(img_path)
-        
-        # Process each directory's frames together
-        for sequence_name, img_paths in image_paths_by_dir.items():
-            # Find the appropriate directory name pattern for this sequence
-            possible_dirs = [
-                sequence_name,
-                f"{sequence_name}_{view}",
-                view + "_" + sequence_name
-            ]
-            
-            sequence_dir = next(
-                (d for pattern in possible_dirs 
-                for d in os.listdir(output_dir) if pattern in d),
-                None
-            )
-            if not sequence_dir:
-                continue
-            
-            concat_file = os.path.join(output_dir, sequence_dir, "concatenated_sequence.csv")
-            
-            if os.path.exists(concat_file):
-                try:
-                    # Load the concatenated CSV with multi-index columns
-                    concat_df = pd.read_csv(concat_file, header=[0, 1, 2], index_col=0)
-                    concat_df = io_utils.fix_empty_first_row(concat_df)
-                    
-                    # Find first seed directory with this sequence
-                    first_seed_dir = next((os.path.join(sd, inference_dir, sequence_dir) 
-                                         for sd in seed_dirs 
-                                         if os.path.exists(os.path.join(sd, inference_dir, sequence_dir))), None)
-                    
-                    if not first_seed_dir:
-                        continue
-                    # Get sorted CSV files (original snippets)
-                    csv_files = sorted(
-                        [f for f in os.listdir(first_seed_dir) 
-                         if f.endswith(".csv") and not f.endswith("_uncropped.csv")],
-                        key=lambda x: int(os.path.splitext(x)[0].replace("img", ""))
-                    ) #  I am not sure that the sort thing makes sense here - check it 
-                    
-                    # Map each original image path to its position in the original sequence of files
-                    img_to_position = {}
-                    for i, csv_file in enumerate(csv_files):
-                        base_name = os.path.splitext(csv_file)[0]
-                        img_path = f"labeled-data/{sequence_name}/{base_name}.png"
-                        if img_path in img_paths:
-                            img_to_position[img_path] = i
-                
-                    # Sort img_paths by their position in the sequence
-                    img_paths_ordered = sorted(img_paths, key=lambda x: img_to_position.get(x, float('inf')))
-                    
-                    # Process each snippet (51 frames each) and extract the center frame
-                    snippet_length = 51  # Typical snippet length
-                    for i, img_path in enumerate(img_paths_ordered):
-                        # Calculate the center frame index for this snippet
-                        center_idx = i * snippet_length + (snippet_length // 2)
-                        if center_idx < concat_df.shape[0]:
-                            # Extract the center frame and set index
-                            center_frame = concat_df.iloc[[center_idx]]
-                            center_frame.index = [img_path]
-                            results_list.append(center_frame)
-                
-                except Exception as e:
-                    pass
-    else:
-        # Process individual snippets (original method) - each snippets is processed independently and no concat
-        for img_path in original_index:
-            sequence_name = img_path.split('/')[1]  # e.g., "180623_000_bot"
-            base_filename = os.path.splitext(os.path.basename(img_path))[0]  # e.g., "img107262"
-            snippet_file = os.path.join(output_dir, sequence_name, f"{base_filename}.csv") # Get the sequence CSV path
-            
-            if os.path.exists(snippet_file):
-                try:
-                    # Load the CSV with multi-index columns
-                    snippet_df = pd.read_csv(snippet_file, header=[0, 1, 2], index_col=0)
-                    snippet_df = io_utils.fix_empty_first_row(snippet_df)
-                    
-                    # Ensure odd number of frames
-                    assert snippet_df.shape[0] & 1 == 1, f"Expected odd number of frames, got {snippet_df.shape[0]}"
-                    idx_frame = int(np.floor(snippet_df.shape[0] / 2)) # Get center frame index
-                    
-                    # Extract center frame and set index
-                    center_frame = snippet_df.iloc[[idx_frame]]  # Keep as DataFrame with one row
-                    center_frame.index = [img_path]
-                    results_list.append(center_frame)
-                    
-                except Exception as e:
-                    pass
-    
-    if results_list:
-        # Combine all results in original order
-        results_df = pd.concat(results_list)
-        results_df = results_df.reindex(original_index) # Reindex to match original
-        results_df.loc[:,("set", "", "")] = "train" # Add "set" column for labeled data predictions
-        
-        # Save predictions
-        preds_file = os.path.join(output_dir, f'predictions_{view}_new.csv')
-        results_df.to_csv(preds_file)
-        
-        # Compute metrics
-        cfg_lp_view = cfg_lp.copy()
-        cfg_lp_view.data.csv_file = [f'CollectedData_{view}_new.csv']
-        cfg_lp_view.data.view_names = [view]
-        
-        try:
-            compute_metrics(cfg=cfg_lp_view, preds_file=[preds_file], data_module=None)
-        except Exception as e:
-            pass
-
-def setup_ensemble_dirs(
-    base_dir: str, 
-    model_type: str, 
-    n_labels: int, 
-    seed_range: tuple[int, int],
-    mode: str,
-    inference_dir: str
-) -> Tuple[str, List[str], str]:
-    """Set up and return directories for ensemble processing"""
-    ensemble_dir = os.path.join(
-        base_dir,
-        f"{model_type}_{n_labels}_{seed_range[0]}-{seed_range[1]}"
-    )
-    seed_dirs = [
-        os.path.join(base_dir, f"{model_type}_{n_labels}_{seed}")
-        for seed in range(seed_range[0], seed_range[1] + 1)
-    ]
-    output_dir = os.path.join(ensemble_dir, mode, inference_dir)
-    os.makedirs(output_dir, exist_ok=True)
-    
-    return ensemble_dir, seed_dirs, output_dir
-
-def get_original_structure(
-    first_seed_dir: str, 
-    inference_dir: str, 
-    views: List[str]
-) -> Dict[str, List[str]]:
-    """Create a mapping of original directories and their files"""
-    video_dir = os.path.join(first_seed_dir, inference_dir)
-    original_structure = {}
-    
-    for view in views:
-        view_dirs = [d for d in os.listdir(video_dir) if view in d]
-        print(f"View {view} dirs: {view_dirs}")
-        
-        for dir_name in view_dirs:
-            dir_path = os.path.join(video_dir, dir_name)
-            # Ensure dir_path is a directory before listing its contents
-            if not os.path.isdir(dir_path):
-                print(f"Skipping {dir_path}, as it is not a directory.")
-                continue
-
-            csv_files = [
-                f
-                for f in os.listdir(dir_path)
-                if f.endswith(".csv") and not f.endswith("_uncropped.csv")
-            ]
-            print(f"Found {len(csv_files)} CSV files in {dir_name}")
-            original_structure[dir_name] = csv_files
-        
-    return original_structure
+def _load_latent_models(pca_object=None, fa_object=None):
+    """Helper function to load PCA and FA models from globals if not provided"""
+    pca_object = pca_object or globals().get('pca_object')
+    fa_object = fa_object or globals().get('fa_object')
+    return pca_object, fa_object
 
 
 def process_ensemble_frames(
@@ -387,42 +160,6 @@ def process_ensemble_frames(
         
     return results_df
 
-def add_variance_columns(column_structure):
-    """Add variance columns to the column structure"""
-    current_tuples = list(column_structure)
-    
-    # Add variance columns for each bodypart
-    new_tuples = []
-    for scorer, bodypart, coord in current_tuples:
-        new_tuples.append((scorer, bodypart, coord))
-        if coord == 'likelihood':  # After each likelihood, add variance columns
-            new_tuples.append((scorer, bodypart, 'x_ens_var'))
-            new_tuples.append((scorer, bodypart, 'y_ens_var'))
-    
-    # Create new column structure with added variance columns
-    return pd.MultiIndex.from_tuples(new_tuples, names=['scorer', 'bodyparts', 'coords'])
-
-def fill_ensemble_results(
-    results_df: pd.DataFrame, 
-    ensemble_preds: np.ndarray, 
-    ensemble_vars: np.ndarray, 
-    ensemble_likes: np.ndarray, 
-    keypoint_names: List[str], 
-    column_structure: pd.MultiIndex
-) -> None:
-    """Fill in ensemble results into the DataFrame"""
-    for k, bp in enumerate(keypoint_names):
-        # Use scorer from column_structure if not in bp; assume first scorer applies
-        scorer = bp.split('/', 1)[0] if '/' in bp else column_structure.levels[0][0]
-        bodypart = bp.split('/', 1)[1] if '/' in bp else bp
-
-        # Fill coordinates and likelihood
-        results_df.loc[:, (scorer, bodypart, 'x')] = ensemble_preds[:, k, 0]
-        results_df.loc[:, (scorer, bodypart, 'y')] = ensemble_preds[:, k, 1]
-        results_df.loc[:, (scorer, bodypart, 'likelihood')] = ensemble_likes[:, k]
-        results_df.loc[:, (scorer, bodypart, 'x_ens_var')] = ensemble_vars[:, k, 0]
-        results_df.loc[:, (scorer, bodypart, 'y_ens_var')] = ensemble_vars[:, k, 1]
-
 # -----------------------------------------------------------------------------
 # Functions for dealing with bounding box issues
 # -----------------------------------------------------------------------------
@@ -465,24 +202,50 @@ def generate_cropped_csv_file(
 
     for col in csv_data.columns:
         if col[-1] in ("x", "y"):
-            vals = csv_data[col]
+            vals = csv_data[col].copy()  # Make a copy to avoid modifying the original
             
             if mode == "add":
+                # First scale if needed
                 if col[-1] == "x" and img_width:
                     vals = (vals / img_width) * bbox_data["w"]
                 elif col[-1] == "y" and img_height:
                     vals = (vals / img_height) * bbox_data["h"]
                 
-            if mode == "subtract":
-                csv_data[col] = vals - bbox_data[col[-1]]
-            else:
+                # Then add bbox offset
                 csv_data[col] = vals + bbox_data[col[-1]]
-
-            if mode == "subtract":
+                
+            elif mode == "subtract":
+                # First subtract bbox offset
+                vals = vals - bbox_data[col[-1]]
+                
+                # Then scale if needed
                 if col[-1] == "x" and img_width:
-                    csv_data[col] = (csv_data[col] / bbox_data["w"]) * img_width 
+                    vals = (vals / bbox_data["w"]) * img_width
                 elif col[-1] == "y" and img_height:
-                    csv_data[col] = (csv_data[col] / bbox_data["h"]) * img_height
+                    vals = (vals / bbox_data["h"]) * img_height
+                    
+                csv_data[col] = vals
+
+    # for col in csv_data.columns:
+    #     if col[-1] in ("x", "y"):
+    #         vals = csv_data[col]
+            
+    #         if mode == "add":
+    #             if col[-1] == "x" and img_width:
+    #                 vals = (vals / img_width) * bbox_data["w"]
+    #             elif col[-1] == "y" and img_height:
+    #                 vals = (vals / img_height) * bbox_data["h"]
+                
+    #         if mode == "subtract":
+    #             csv_data[col] = vals - bbox_data[col[-1]]
+    #         else:
+    #             csv_data[col] = vals + bbox_data[col[-1]]
+
+    #         if mode == "subtract":
+    #             if col[-1] == "x" and img_width:
+    #                 csv_data[col] = (csv_data[col] / bbox_data["w"]) * img_width 
+    #             elif col[-1] == "y" and img_height:
+    #                 csv_data[col] = (csv_data[col] / bbox_data["h"]) * img_height
 
     output_csv_file = Path(output_csv_file)
     output_csv_file.parent.mkdir(parents=True, exist_ok=True)
@@ -608,7 +371,10 @@ def process_multiview_directories_concat(
                     
                     # Ensure unique indices
                     if not concat_df.empty:
-                        df.index = df.index + concat_df.index[-1] + 1
+                        # df.index = df.index + concat_df.index[-1] + 1
+                        # Calculate the next index value
+                        next_index = concat_df.index[-1] + 1
+                        df.index = df.index + next_index
                     
                     concat_df = pd.concat([concat_df, df]) if not concat_df.empty else df
                 
@@ -628,12 +394,21 @@ def process_multiview_directories_concat(
                         # Ensure unique indices
                         if not concat_bbox_df.empty:
                             # Adjust indices for proper concatenation
-                            for idx_col in ['Unnamed: 0']:
-                                if idx_col in bbox_df.columns and idx_col in concat_bbox_df.columns:
-                                    bbox_df[idx_col] += concat_bbox_df[idx_col].max() + 1
+                            # for idx_col in ['Unnamed: 0']:
+                            #     if idx_col in bbox_df.columns and idx_col in concat_bbox_df.columns:
+                            #         bbox_df[idx_col] += concat_bbox_df[idx_col].max() + 1
                             
-                            bbox_df.index = bbox_df.index + concat_bbox_df.index[-1] + 1
-                        
+                            # bbox_df.index = bbox_df.index + concat_bbox_df.index[-1] + 1
+                            # Calculate the next index value
+                            next_index = concat_bbox_df.index[-1] + 1
+                            
+                            # Update the index
+                            bbox_df.index = bbox_df.index + next_index
+                            
+                            # If 'Unnamed: 0' column exists, update it consistently with the index
+                            if 'Unnamed: 0' in bbox_df.columns and 'Unnamed: 0' in concat_bbox_df.columns:
+                                bbox_df['Unnamed: 0'] = bbox_df.index
+
                         concat_bbox_df = pd.concat([concat_bbox_df, bbox_df]) if not concat_bbox_df.empty else bbox_df
                     
                     bbox_temp_file = os.path.join(output_dir, f"temp_bbox_{view}_{seed_idx}_{sequence_key}.csv")
@@ -644,16 +419,29 @@ def process_multiview_directories_concat(
                     all_view_files[view] = []
                 all_view_files[view].append(temp_file)
         
-        # Format input data and run EKS multiview
-        input_dfs_list = []
-        keypoint_names = []
+        # # Format input data and run EKS multiview
+        # input_dfs_list = []
+        # keypoint_names = []
         
-        for view, files in all_view_files.items():
-            if files:
-                view_dfs, kp_names = format_data(input_source=files, camera_names=[view])
-                if not keypoint_names:
-                    keypoint_names = kp_names
-                input_dfs_list.extend(view_dfs)
+        # for view, files in all_view_files.items():
+        #     if files:
+        #         view_dfs, kp_names = format_data(input_source=files, camera_names=[view])
+        #         if not keypoint_names:
+        #             keypoint_names = kp_names
+        #         input_dfs_list.extend(view_dfs)
+
+        # Collect all files from all views
+        all_files = []
+        for view_files in all_view_files.values():
+            all_files.extend(view_files)
+
+        # Format all data together with all camera names
+        if all_files:
+            all_camera_names = list(all_view_files.keys())
+            input_dfs_list, keypoint_names = format_data(
+                input_source=all_files,
+                camera_names=all_camera_names
+            )
         
         if not input_dfs_list:
             print(f"No valid data found for sequence {sequence_key}")
@@ -809,11 +597,6 @@ def process_multiple_video_single_view(
         results_df.to_csv(preds_file)
         print(f"Saved ensemble {mode} predictions for {file_name} to {preds_file}")
 
-def _load_latent_models(pca_object=None, fa_object=None):
-    """Helper function to load PCA and FA models from globals if not provided"""
-    pca_object = pca_object or globals().get('pca_object')
-    fa_object = fa_object or globals().get('fa_object')
-    return pca_object, fa_object
 
 def post_process_ensemble_labels_concat(
     cfg_lp: DictConfig,
@@ -1126,7 +909,7 @@ def run_eks_multiview(
         var_mode = var_mode,
         inflate_vars = False,
         inflate_vars_kwargs = inflate_vars_kwargs,
-        n_latent =3,
+        n_latent =6,
         verbose = verbose,
         pca_object = pca_object,
     )
