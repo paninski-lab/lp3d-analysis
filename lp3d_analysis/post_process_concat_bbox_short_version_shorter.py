@@ -3,7 +3,7 @@ import os
 import pickle
 import traceback
 from pathlib import Path
-from typing import Optional, Union, Callable, List, Literal, Tuple, Any
+from typing import Optional, Union, Callable, List, Literal, Tuple, Any, Dict
 
 # Third-party imports
 import pandas as pd
@@ -16,6 +16,8 @@ from lp3d_analysis.io import (
     process_predictions,
     setup_ensemble_dirs,
     get_original_structure,
+    collect_csv_files_by_seed,
+    group_directories_by_sequence
 )
 from lp3d_analysis.utils import (
     add_variance_columns,
@@ -23,6 +25,7 @@ from lp3d_analysis.utils import (
     process_final_predictions,
     prepare_uncropped_csv_files,
     generate_cropped_csv_file,
+    concatenate_csv_files,
 )
 
 # lightning_pose utilities
@@ -122,7 +125,6 @@ def _get_bbox_path_fn(p: Path, results_dir: Path, data_dir: Path) -> Path:
 
     return bbox_path
 
-
 def process_ensemble_frames(
     all_pred_files: List[str],
     keypoint_names: List[str],
@@ -184,9 +186,96 @@ def process_ensemble_frames(
         
     return results_df
 
+
+def save_results_with_bbox(
+    result_df: pd.DataFrame,
+    output_path: str,
+    filename: str,
+    bbox_file: Optional[str] = None,
+    img_height: int = 320,
+    img_width: int = 320
+) -> None:
+    """Save result DataFrame, handling both cropped and uncropped versions if bbox is available."""
+    os.makedirs(output_path, exist_ok=True)
+    
+    if bbox_file and os.path.exists(bbox_file):
+        # Save uncropped result first, then generate cropped version
+        uncropped_file = os.path.join(output_path, f"{filename}_uncropped.csv")
+        result_df.to_csv(uncropped_file)
+        
+        cropped_file = os.path.join(output_path, f"{filename}.csv")
+        generate_cropped_csv_file(
+            input_csv_file=uncropped_file,
+            input_bbox_file=bbox_file,
+            output_csv_file=cropped_file,
+            img_height=img_height,
+            img_width=img_width,
+            mode="subtract"
+        )
+    else:
+        # No bbox file, save result directly
+        result_file = os.path.join(output_path, f"{filename}.csv")
+        result_df.to_csv(result_file)
+
 # -----------------------------------------------------------------------------
 # Higher-level processing functions 
 # -----------------------------------------------------------------------------
+
+def process_view_csv_files(
+    view: str, 
+    dir_name: str, 
+    seed_dirs: List[str], 
+    inference_dir: str,
+    output_dir: str, 
+    sequence_key: str, 
+    get_bbox_path_fn
+) -> List[str]:
+    """Process CSV files for a given view and create temp files."""
+    temp_files = []
+    
+    # Collect and group CSV files by seed
+    csv_files_by_seed = collect_csv_files_by_seed(
+        view, dir_name, seed_dirs, inference_dir
+    )
+    
+    # Process each seed's CSV files
+    for seed_idx, csv_files in csv_files_by_seed.items():
+        # Find bbox files if needed
+        bbox_files = []
+        if get_bbox_path_fn is not None:
+            bbox_files = [str(get_bbox_path_fn(Path(csv_file))) for csv_file in csv_files]
+            bbox_files = [bf for bf in bbox_files if os.path.exists(bf)]
+            
+            if bbox_files:
+                bbox_files = sorted(
+                    bbox_files,
+                    key=lambda x: int(os.path.splitext(os.path.basename(x))[0].replace("img", "").replace("_bbox", ""))
+                )
+        
+        # Get uncropped files (either from original or by adding bbox offsets)
+        uncropped_files = prepare_uncropped_csv_files(csv_files, get_bbox_path_fn) if bbox_files else csv_files
+        if not uncropped_files:
+            print(f"Warning: No uncropped files for view {view}, seed {seed_idx}")
+            continue
+        
+        # Concatenate uncropped files
+        concat_df = concatenate_csv_files(uncropped_files, is_marker_file=True)
+        
+        if concat_df.empty:
+            continue
+            
+        # Save concatenated file
+        temp_file = os.path.join(output_dir, f"temp_{view}_{seed_idx}_{sequence_key}.csv")
+        concat_df.to_csv(temp_file)
+        temp_files.append(temp_file)
+        
+        # Process bbox files if available
+        if bbox_files:
+            concat_bbox_df = concatenate_csv_files(bbox_files, is_marker_file=False)
+            bbox_temp_file = os.path.join(output_dir, f"temp_bbox_{view}_{seed_idx}_{sequence_key}.csv")
+            concat_bbox_df.to_csv(bbox_temp_file)
+    
+    return temp_files
 
 def process_multiview_directories_concat(
     views: List[str],
@@ -199,7 +288,7 @@ def process_multiview_directories_concat(
     get_bbox_path_fn: Callable[[Path, ], Path] | None = None,
 ) -> None:
     """Process multiview directories by concatenating CSV files and applying Multiview EKS."""
-    
+    print(f"seed dirs: {seed_dirs}")
     # Setup FA parameters for variance inflation if available
     inflate_vars_kwargs = {}
     if fa_object is not None:
@@ -211,22 +300,8 @@ def process_multiview_directories_concat(
     else:
         print("No FA object available for variance inflation")
     
-    # Get video directory from first seed
-    video_dir = os.path.join(seed_dirs[0], inference_dir)
-    sequences = {} # Group directories across views by sequence name
-
-    for view in views:
-        view_dirs = [d for d in os.listdir(video_dir) if view in d and os.path.isdir(os.path.join(video_dir, d))]
-        print(f"View {view} dirs: {view_dirs}")
-        
-        for dir_name in view_dirs:
-            # Extract sequence name by removing view identifier
-            parts = dir_name.split('_')
-            sequence_key = '_'.join([p for p in parts if p not in views])
-            
-            if sequence_key not in sequences:
-                sequences[sequence_key] = {}
-            sequences[sequence_key][view] = dir_name
+    # Group directories by sequence across views
+    sequences = group_directories_by_sequence(views, seed_dirs[0], inference_dir)
     
     # Process each sequence
     for sequence_key, view_dirs in sequences.items():
@@ -238,82 +313,14 @@ def process_multiview_directories_concat(
             view_output_path = os.path.join(output_dir, dir_name)
             os.makedirs(view_output_path, exist_ok=True)
             
-            # Collect and group CSV files by seed
-            csv_files_by_seed = {}
-            for seed_idx, seed_dir in enumerate(seed_dirs):
-                seed_sequence_dir = os.path.join(seed_dir, inference_dir, dir_name)
-                if not os.path.exists(seed_sequence_dir):
-                    continue
-                    
-                csv_files = sorted(
-                    [os.path.join(seed_sequence_dir, f) for f in os.listdir(seed_sequence_dir)
-                     if f.endswith(".csv") and not f.endswith("_uncropped.csv")],
-                    key=lambda x: int(os.path.splitext(os.path.basename(x))[0].replace("img", ""))
-                )
-                
-                if csv_files:
-                    csv_files_by_seed[seed_idx] = csv_files
+            # Process CSV files for this view and create temp files
+            temp_files = process_view_csv_files(
+                view, dir_name, seed_dirs, inference_dir, 
+                output_dir, sequence_key, get_bbox_path_fn
+            )
             
-            # Process each seed's CSV files
-            for seed_idx, csv_files in csv_files_by_seed.items():
-                # Find bbox files if needed
-                bbox_files = []
-                if get_bbox_path_fn is not None:
-                    bbox_files = [str(get_bbox_path_fn(Path(csv_file))) for csv_file in csv_files]
-                    bbox_files = [bf for bf in bbox_files if os.path.exists(bf)]
-                    
-                    if bbox_files:
-                        bbox_files.sort(key=lambda x: int(os.path.splitext(os.path.basename(x))[0].replace("img", "").replace("_bbox", "")))
-                
-                # Get uncropped files (either from original or by adding bbox offsets)
-                uncropped_files = prepare_uncropped_csv_files(csv_files, get_bbox_path_fn) if bbox_files else csv_files
-                if not uncropped_files:
-                    print(f"Warning: No uncropped files for view {view}, seed {seed_idx}")
-                    continue
-                
-                # Concatenate uncropped files
-                concat_df = pd.DataFrame()
-                for csv_file in uncropped_files:
-                    df = pd.read_csv(csv_file, header=[0, 1, 2], index_col=0)
-                    df = io_utils.fix_empty_first_row(df)
-                    
-                    # Ensure unique indices
-                    if not concat_df.empty:
-                        # df.index = df.index + concat_df.index[-1] + 1
-                        # Calculate the next index value
-                        next_index = concat_df.index[-1] + 1
-                        df.index = df.index + next_index
-                    
-                    concat_df = pd.concat([concat_df, df]) if not concat_df.empty else df
-                
-                if concat_df.empty:
-                    continue
-                    
-                # Save concatenated file
-                temp_file = os.path.join(output_dir, f"temp_{view}_{seed_idx}_{sequence_key}.csv")
-                concat_df.to_csv(temp_file)
-                
-                # Process bbox files if available
-                if bbox_files:
-                    concat_bbox_df = pd.DataFrame()
-                    for bbox_file in bbox_files:
-                        bbox_df = pd.read_csv(bbox_file, index_col=0)
-                        
-                        # Ensure unique indices
-                        if not concat_bbox_df.empty:
-                            # Adjust indices for proper concatenation
-                            next_index = concat_bbox_df.index[-1] + 1
-                            bbox_df.index = bbox_df.index + next_index
-
-                        concat_bbox_df = pd.concat([concat_bbox_df, bbox_df]) if not concat_bbox_df.empty else bbox_df
-                    
-                    bbox_temp_file = os.path.join(output_dir, f"temp_bbox_{view}_{seed_idx}_{sequence_key}.csv")
-                    concat_bbox_df.to_csv(bbox_temp_file)
-                
-                # Store the temp file for this view
-                if view not in all_view_files:
-                    all_view_files[view] = []
-                all_view_files[view].append(temp_file)
+            if temp_files:
+                all_view_files[view] = temp_files
 
         # Collect all files from all views
         all_files = []
@@ -345,33 +352,26 @@ def process_multiview_directories_concat(
         for view, result_df in results_dfs.items():
             view_dir = view_dirs[view]
             view_output_path = os.path.join(output_dir, view_dir)
-            result_file = os.path.join(view_output_path, "concatenated_sequence.csv") # output file paths
             
             # Find bbox file if available
             bbox_file = None
             if get_bbox_path_fn is not None:
-                seed_idx = list(csv_files_by_seed.keys())[0] if csv_files_by_seed else 0
+                # seed_idx = list(csv_files_by_seed.keys())[0] if csv_files_by_seed else 0
+                # try to get the first seed
+                seed_idx = seed_dirs[0].split("_")[-1]
+                print(f"Using seed index {seed_idx} for bbox file")
+
                 bbox_file = os.path.join(output_dir, f"temp_bbox_{view}_{seed_idx}_{sequence_key}.csv")
                 if not os.path.exists(bbox_file):
                     bbox_file = None
             
-            # Handle with or without bbox files
-            if bbox_file:
-                # Save uncropped result first, then generate cropped version
-                uncropped_file = os.path.join(view_output_path, "concatenated_sequence_uncropped.csv")
-                result_df.to_csv(uncropped_file)
-                
-                generate_cropped_csv_file(
-                    input_csv_file=uncropped_file,
-                    input_bbox_file=bbox_file,
-                    output_csv_file=result_file,
-                    img_height=320,
-                    img_width=320,
-                    mode="subtract"
-                )
-            else:
-                # No bbox file, save result directly
-                result_df.to_csv(result_file)
+            # Save results
+            save_results_with_bbox(
+                result_df=result_df,
+                output_path=view_output_path,
+                filename="concatenated_sequence",
+                bbox_file=bbox_file
+            )
         
         # Clean up temporary files
         for view in views:
@@ -631,7 +631,7 @@ def post_process_ensemble_videos(
 
         if mode == 'eks_multiview':
             # Get the files in the inference directory partitioned by view.
-            files_by_view = io.collect_files_by_token(list(map(Path, entries)), views)
+            files_by_view = collect_files_by_token(list(map(Path, entries)), views)
             # Get the files in the inference directory FOR JUST ONE VIEW.
             # There should be one file per session. These we call "first view sessions".
             first_view_sessions = list(map(str, files_by_view[views[0]]))
