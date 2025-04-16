@@ -91,7 +91,11 @@ def process_predictions(pred_file: str, include_likelihood = True, include_varia
         selected_coords.append('likelihood')
     if include_variance:
         selected_coords.extend(['x_ens_var', 'y_ens_var'])
-    elif include_posterior_variance:
+    # elif include_posterior_variance:
+    #     selected_coords.extend(['x_posterior_var', 'y_posterior_var'])
+    # elif include_posterior_variance:
+    #     selected_coords.extend(['x_posterior_var', 'y_posterior_var'])
+    if include_posterior_variance:
         selected_coords.extend(['x_posterior_var', 'y_posterior_var'])
     
     if column_structure is None:
@@ -234,6 +238,7 @@ def collect_csv_files_by_seed(
                 key=lambda x: int(os.path.splitext(os.path.basename(x))[0].replace("img", ""))
             )
             csv_files_by_seed[seed_idx] = csv_files
+            print(f" the order of the files is {csv_files}")
     
     return csv_files_by_seed
 

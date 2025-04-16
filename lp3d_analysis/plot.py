@@ -42,6 +42,7 @@ plot_colors = {
     'eks_multiview_varinf_quantile_100': 'blue',
 
     'ens_med_anipose':  'blue',
+    'eks_multiview_videos_new':  'purple',
     
     # 'eks_multiview_postpred_3pcs_old': 'lightcoral',
 
@@ -51,7 +52,6 @@ plot_colors = {
     # 'eks_multiview_varinf_pca_mean':  '#FFD700',
     # 'eks_multiview_smooth_pca_mean':  'lightcoral', # kind of purple 
 }
-
 
 
 def find_prediction_files(directory, view_name):

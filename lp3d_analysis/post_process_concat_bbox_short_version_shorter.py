@@ -251,6 +251,7 @@ def process_view_csv_files(
                     bbox_files,
                     key=lambda x: int(os.path.splitext(os.path.basename(x))[0].replace("img", "").replace("_bbox", ""))
                 )
+                print(f" the order of the bbox files for validation is {bbox_files}")
         
         # Get uncropped files (either from original or by adding bbox offsets)
         uncropped_files = prepare_uncropped_csv_files(csv_files, get_bbox_path_fn) if bbox_files else csv_files
@@ -752,6 +753,7 @@ def run_eks_multiview(
     # inflate_vars_v_quantile_thresh = None,
     inflate_vars_kwargs: dict = {},
     verbose: bool = False,
+    n_latent: int = 6, # also add this to the other function and sending in this integer instead of pulling from the config only one things 
     pca_object = None,
 ) -> dict[str, pd.DataFrame]:
 
@@ -793,7 +795,7 @@ def run_eks_multiview(
         var_mode = var_mode,
         inflate_vars = False,
         inflate_vars_kwargs = inflate_vars_kwargs,
-        n_latent =6,
+        n_latent =6, # try to set it equal to n_latents, and make this n_latents as an integer rather 
         verbose = verbose,
         pca_object = pca_object,
     )

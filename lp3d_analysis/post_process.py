@@ -1093,7 +1093,7 @@ def run_eks_multiview(
         var_mode = var_mode,
         inflate_vars = False,
         inflate_vars_kwargs = inflate_vars_kwargs,
-        n_latent = 3,
+        n_latent = 6,
         verbose = verbose,
         pca_object = pca_object,
     )

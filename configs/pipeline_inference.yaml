@@ -1,8 +1,8 @@
 #TODO 
 # ask Matt about adding the views variable to the config file so we can pick the views that we have and in that way instead of iterating over files we will iterate over views - which will determine things
 
-dataset_name: chickadee-crop
-# dataset_name: fly-anipose
+# dataset_name: chickadee-crop
+dataset_name: fly-anipose
 # dataset_name: mirror-mouse-separate
 
 lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_${dataset_name}.yaml
@@ -42,8 +42,8 @@ train_networks:
     # - semisupervised
   # run inference on videos in these directories (independent of training videos)
   inference_dirs:
-    # - videos_new
-    - videos-for-each-labeled-frame
+    - videos_new
+    # - videos-for-each-labeled-frame
     # - videos_debug
     # - videos_ind
     # - videos_paper
@@ -62,20 +62,32 @@ train_networks:
   train_check_interval: 5
 
 # post-processing options
-post_processing_labels:
+# post_processing_labels:
 
-  eks_singleview:
-    run: False
-    overwrite: False
-  eks_multiview:
-    run: True
-    overwrite: True
-  ensemble_mean:
-    run: False
-    overwrite: False
-  ensemble_median:
-    run: False
-    overwrite: False 
+#   eks_singleview:
+#     run: False
+#     overwrite: False
+#   eks_multiview:
+#     run: False
+#     use_pca: False
+#     n_components: 3 # components for pca object  
+#     overwrite: False
+#   ensemble_mean:
+#     run: False
+#     overwrite: False
+#   ensemble_median:
+#     run: False
+#     overwrite: False 
+
+post_processing_labeled_frames:
+  run : True
+  overwrite: False
+  modes:
+    # - eks_singleview
+    - eks_multiview
+    # - ensemble_mean
+    # - ensemble_median
+
 
 post_processing_videos:
 
@@ -83,8 +95,9 @@ post_processing_videos:
     run: False
     overwrite: False
   eks_multiview:
-    run: False
-    overwrite: False
+    run: True
+    overwrite: True
+    n_latent: 3 # components for pca object
   ensemble_mean:
     run: False
     overwrite: False
