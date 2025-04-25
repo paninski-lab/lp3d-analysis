@@ -88,7 +88,7 @@ def pipeline(config_file: str, for_seed: int | None = None) -> None:
         for model_type in cfg_pipe.train_networks.model_types:
             for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
                 if mode_config.run: # if the mode is mean or median or eks_singleview 
-                    #print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}"
+                    print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}")
                     # cfg_lp_copy = make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_seed)
                     post_process_ensemble_videos(
                         cfg_lp=cfg_lp_copy.copy(),
@@ -99,23 +99,18 @@ def pipeline(config_file: str, for_seed: int | None = None) -> None:
                         views= list(cfg_lp.data.view_names), # before it was not a list... 
                         mode=mode,
                         inference_dirs=cfg_pipe.train_networks.inference_dirs,
+                        # n_latent = mode_config.n_latent if hasattr(mode_config, 'n_latent') else None,
                         # n_latent = mode_config.n_latent if hasattr(mode_config, 'n_latent') else 3,
                         overwrite=mode_config.overwrite,
-                         **({'n_latent': mode_config.n_latent} if hasattr(mode_config, 'n_latent') else {})
-                        
+                        **({"n_latent": mode_config.n_latent} if hasattr(mode_config, 'n_latent') else {})
                     )
-                    print(f" Debug using n_latent {mode_config.n_latent} for {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}")
-
-    # Add processing of labeled frames after post-processing videos
+    
+    # Second part - make labeled frames extraction completely independent
     if hasattr(cfg_pipe, "post_processing_labeled_frames") and cfg_pipe.post_processing_labeled_frames.run:
         print("\n----- Processing labeled frames for ensemble methods -----")
         for model_type in cfg_pipe.train_networks.model_types:
             for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
                 for mode in cfg_pipe.post_processing_labeled_frames.modes:
-                    if mode not in cfg_pipe.post_processing_videos or not cfg_pipe.post_processing_videos[mode].run:
-                        print(f"Skipping {mode} for labeled frames as it was not run in post_processing_videos")
-                        continue
-                        
                     print(f"\nExtracting labeled frame predictions for {model_type} {n_hand_labels} using {mode}")
                     # specify output directory for the ensemble
                     results_dir = os.path.join(
@@ -126,17 +121,59 @@ def pipeline(config_file: str, for_seed: int | None = None) -> None:
                     
                     # Run labeled frames extraction for each inference directory
                     for inference_dir in cfg_pipe.train_networks.inference_dirs:
-                        extract_labeled_frame_predictions(
-                            cfg_lp=cfg_lp_copy,
-                            results_dir=results_dir,
-                            model_type=model_type,
-                            n_labels=n_hand_labels,
-                            seed_range=(cfg_pipe.train_networks.ensemble_seeds[0], cfg_pipe.train_networks.ensemble_seeds[-1]),
-                            views=list(cfg_lp.data.view_names),
-                            mode=mode,
-                            inference_dir=inference_dir,
-                            overwrite=cfg_pipe.post_processing_labeled_frames.overwrite
-                        )
+                        # I want to run only if there are files in the directory and it is not emptyh 
+                        print(f"Checking if inference directory {inference_dir} exists and is not empty")
+                        if os.path.exists(os.path.join(results_dir, inference_dir)) and os.listdir(os.path.join(results_dir, inference_dir)):
+                            extract_labeled_frame_predictions(
+                                cfg_lp=cfg_lp_copy,
+                                results_dir=results_dir,
+                                model_type=model_type,
+                                n_labels=n_hand_labels,
+                                seed_range=(cfg_pipe.train_networks.ensemble_seeds[0], cfg_pipe.train_networks.ensemble_seeds[-1]),
+                                views=list(cfg_lp.data.view_names),
+                                mode=mode,
+                                inference_dir=inference_dir,
+                                overwrite=cfg_pipe.post_processing_labeled_frames.overwrite
+                            )
+                        else:
+                            print(f"Skipping {inference_dir} as it does not exist or is empty so we cannot extract labeled frames")
+
+    # # Add processing of labeled frames after post-processing videos
+    # if hasattr(cfg_pipe, "post_processing_labeled_frames") and cfg_pipe.post_processing_labeled_frames.run:
+    #     print("\n----- Processing labeled frames for ensemble methods -----")
+    #     for model_type in cfg_pipe.train_networks.model_types:
+    #         for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
+    #             for mode in cfg_pipe.post_processing_labeled_frames.modes:
+    #                 if mode not in cfg_pipe.post_processing_videos or not cfg_pipe.post_processing_videos[mode].run:
+    #                     print(f"Skipping {mode} for labeled frames as it was not run in post_processing_videos")
+    #                     continue
+                        
+    #                 print(f"\nExtracting labeled frame predictions for {model_type} {n_hand_labels} using {mode}")
+    #                 # specify output directory for the ensemble
+    #                 results_dir = os.path.join(
+    #                     outputs_dir, cfg_pipe.intermediate_results_dir, 
+    #                     f'{model_type}_{n_hand_labels}_{cfg_pipe.train_networks.ensemble_seeds[0]}',
+    #                 )
+    #                 cfg_lp_copy = make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, cfg_pipe.train_networks.ensemble_seeds[0])
+                    
+    #                 # Run labeled frames extraction for each inference directory
+    #                 for inference_dir in cfg_pipe.train_networks.inference_dirs:
+    #                     extract_labeled_frame_predictions(
+    #                         cfg_lp=cfg_lp_copy,
+    #                         results_dir=results_dir,
+    #                         model_type=model_type,
+    #                         n_labels=n_hand_labels,
+    #                         seed_range=(cfg_pipe.train_networks.ensemble_seeds[0], cfg_pipe.train_networks.ensemble_seeds[-1]),
+    #                         views=list(cfg_lp.data.view_names),
+    #                         mode=mode,
+    #                         inference_dir=inference_dir,
+    #                         overwrite=cfg_pipe.post_processing_labeled_frames.overwrite
+    #                     )
+
+
+
+
+
     # for mode, mode_config in cfg_pipe.post_processing_labels.items():
     #     for model_type in cfg_pipe.train_networks.model_types:
     #         for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:

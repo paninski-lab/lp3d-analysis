@@ -6,6 +6,8 @@ import pickle
 import traceback
 
 from typing import Optional, Union, Callable
+from collections import defaultdict
+
 
 from lp3d_analysis import io
 from omegaconf import DictConfig
@@ -47,12 +49,12 @@ This is loading the pca and FA objects - we will probably not use it like that l
 
 
 # # loading pca objects and fa objects if necessart
-# # pca_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_mirror-mouse-separate.pkl"
-pca_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_fly.pkl"
+pca_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_mirror-mouse-separate.pkl"
+# pca_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_fly.pkl"
 # pca_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_chickadee-crop_6pcs_new.pkl"
 
 # # fa_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_mirror-mouse-separate.pkl"
-fa_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/fa_object_inD_fly.pkl"
+# fa_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/fa_object_inD_fly.pkl"
 # fa_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_chickadee-crop_6pcs_new.pkl"
 
 class CustomUnpickler(pickle.Unpickler):
@@ -252,6 +254,7 @@ def post_process_ensemble_videos(
     inference_dirs: List[str],
     overwrite: bool,
     n_latent: int = 3,
+    # n_latent: int | None = None,
     pca_object = None,
     fa_object = None
 ) -> None:
@@ -328,13 +331,13 @@ def post_process_ensemble_videos(
                 # Not None when there's bbox files in the dataset, i.e. chickadee-crop.
                 all_pred_files_uncropped = prepare_uncropped_csv_files(all_pred_files, lambda p: _get_bbox_path_fn(p, Path(results_dir), Path(cfg_lp.data.data_dir)))
 
-
                 input_dfs_list, keypoint_names = format_data(
                     input_source=all_pred_files_uncropped or all_pred_files,
                     camera_names=views,
                 )
 
                 # Run multiview EKS
+                # n_latent = n_latent if n_latent is not None else 3
                 results_dfs = run_eks_multiview(
                     markers_list=input_dfs_list,
                     keypoint_names=keypoint_names,
@@ -375,6 +378,175 @@ def post_process_ensemble_videos(
                     mode=mode
                 )
 
+
+def load_collected_data(
+    cfg_lp: DictConfig,
+    view: str
+) -> Optional[pd.DataFrame]:
+    """Load and process CollectedData file for a specific view."""
+    collected_data_path = os.path.join(cfg_lp.data.data_dir, f"CollectedData_{view}_new.csv")
+    if not os.path.exists(collected_data_path):
+        print(f"Warning: CollectedData file not found for {view}")
+        return None
+    else: 
+        df = pd.read_csv(collected_data_path, header=[0, 1, 2], index_col=0)
+        df = io_utils.fix_empty_first_row(df)
+        print(f"Loaded CollectedData file with shape: {df.shape}")
+        return df
+
+def get_valid_indices(collected_df: pd.DataFrame) -> List[str]:
+    """Extract valid image indices from collected data."""
+    return [
+        idx for idx in collected_df.index 
+        if idx not in ['bodyparts', 'coords'] 
+        and isinstance(idx, str) 
+        and '/' in idx
+    ]
+
+def group_indices_by_sequence(indices: List[str]) -> Dict[str, List[str]]:
+    """Group indices by sequence name."""
+    sequences = defaultdict(list)
+    for idx in indices:
+        parts = idx.split('/')
+        if len(parts) >= 2:
+            sequences[parts[1]].append(idx)
+    return dict(sequences)
+
+def find_prediction_files(
+    path_videos_new: str,
+    view: str
+) -> List[str]:
+    """Find prediction files for a specific view."""
+    pattern = rf"(?<![A-Z]){re.escape(view)}(?![A-Z])"
+    return [
+        os.path.join(path_videos_new, filename)
+        for filename in os.listdir(path_videos_new)
+        if os.path.isfile(os.path.join(path_videos_new, filename))
+        and re.search(pattern, filename)
+        and 'pixel_error' not in filename
+    ]
+
+def extract_frame_numbers(indices: List[str]) -> Dict[str, int]:
+    """Extract frame numbers from image paths."""
+    img_to_frame_num = {}
+    for idx in indices:
+        parts = idx.split('/')
+        if len(parts) >= 3:
+            frame_file = parts[2]
+            frame_match = re.search(r'img(\d+)\.png', frame_file)
+            if frame_match:
+                img_to_frame_num[idx] = int(frame_match.group(1))
+    return img_to_frame_num
+
+
+
+def process_numeric_indices(
+    pred_df: pd.DataFrame,
+    img_to_frame_num: Dict[str, int],
+    combined_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Process prediction file with numeric indices."""
+    sample_frames = list(img_to_frame_num.values())[:5]
+    frame_exists = [frame in pred_df.index for frame in sample_frames]
+
+    if any(frame_exists):
+        match_count = 0
+        for img_path, frame_num in img_to_frame_num.items():
+            if frame_num in pred_df.index:
+                combined_df.loc[img_path] = pred_df.loc[frame_num]
+                match_count += 1
+        print(f"Matched {match_count} frames by direct frame number")
+    else:
+        sorted_pred_indices = sorted(pred_df.index)
+        sorted_img_paths = sorted(img_to_frame_num.keys(), key=lambda x: img_to_frame_num[x])
+        min_length = min(len(sorted_pred_indices), len(sorted_img_paths))
+        
+        for i in range(min_length):
+            img_path = sorted_img_paths[i]
+            pred_idx = sorted_pred_indices[i]
+            combined_df.loc[img_path] = pred_df.loc[pred_idx]
+        print(f"Mapped {min_length} frames by position")
+    
+    return combined_df
+
+def process_string_indices(
+    pred_df: pd.DataFrame,
+    img_to_frame_num: Dict[str, int],
+    combined_df: pd.DataFrame,
+    sequence: str
+) -> pd.DataFrame:
+    """Process prediction file with string indices."""
+    seq_indices = [idx for idx in pred_df.index if isinstance(idx, str) and sequence in idx]
+    if seq_indices:
+        match_count = 0
+        for img_path, frame_num in img_to_frame_num.items():
+            for pred_idx in seq_indices:
+                pred_frame_match = re.search(r'img(\d+)\.png', pred_idx)
+                if pred_frame_match and int(pred_frame_match.group(1)) == frame_num:
+                    combined_df.loc[img_path] = pred_df.loc[pred_idx]
+                    match_count += 1
+                    break
+        print(f"Matched {match_count} frames by frame number in path")
+    else:
+        print("Warning: Could not determine how to map indices for this file")
+    return combined_df
+
+def process_prediction_file(
+    pred_file: str,
+    collected_df: pd.DataFrame,
+    img_to_frame_num: Dict[str, int],
+    combined_df: Optional[pd.DataFrame]
+) -> Optional[pd.DataFrame]:
+    """Process a single prediction file and update combined DataFrame."""
+    try:
+        pred_df = pd.read_csv(pred_file, header=[0, 1, 2], index_col=0)
+        pred_df = io_utils.fix_empty_first_row(pred_df)
+        print(f"Loaded prediction file with shape: {pred_df.shape}")
+
+        if combined_df is None:
+            combined_df = pd.DataFrame(index=collected_df.index, columns=pred_df.columns)
+            print(f"Initialized combined DataFrame with shape: {combined_df.shape}")
+
+        if pred_df.index.dtype == 'int64' or all(isinstance(x, int) for x in pred_df.index if isinstance(x, (int, float))):
+            return process_numeric_indices(pred_df, img_to_frame_num, combined_df)
+        else:
+            return process_string_indices(pred_df, img_to_frame_num, combined_df)
+
+    except Exception as e:
+        print(f"Error processing prediction file {pred_file}: {e}")
+        print(traceback.format_exc())
+        return combined_df
+
+def save_and_evaluate_results(
+    combined_df: pd.DataFrame,
+    output_dir: str,
+    view: str,
+    cfg_lp: DictConfig
+) -> None:
+    """Save combined predictions and compute metrics."""
+    if combined_df is None:
+        print(f"Warning: No data was combined for {view}")
+        return
+
+    combined_df.loc[:, ("set", "", "")] = "train"
+    non_empty_count = combined_df.dropna(how='all').shape[0]
+    print(f"\nSuccessfully filled {non_empty_count} out of {combined_df.shape[0]} rows")
+
+    output_file = os.path.join(output_dir, f"predictions_{view}_new.csv")
+    combined_df.to_csv(output_file)
+    print(f"Saved predictions to {output_file}")
+
+    cfg_lp_view = cfg_lp.copy()
+    cfg_lp_view.data.csv_file = [f'CollectedData_{view}_new.csv']
+    cfg_lp_view.data.view_names = [view]
+
+    try:
+        compute_metrics(cfg=cfg_lp_view, preds_file=[output_file], data_module=None)
+        print(f"Successfully computed metrics for {view}")
+    except Exception as e:
+        print(f"Error computing metrics for {view}: {str(e)}")
+        print(traceback.format_exc())
+
 def extract_labeled_frame_predictions(
     cfg_lp: DictConfig,
     results_dir: str,
@@ -406,10 +578,8 @@ def extract_labeled_frame_predictions(
     ensemble_dir, seed_dirs, _ = setup_ensemble_dirs(
         base_dir, model_type, n_labels, seed_range, mode, ""
     )
-    
     method_dir = os.path.join(ensemble_dir, mode)
     path_videos_new = os.path.join(method_dir, inference_dir)
-    
     # Create output directory for labeled frame predictions
     output_dir = os.path.join(method_dir, "videos-for-each-labeled-frame")
     os.makedirs(output_dir, exist_ok=True)
@@ -425,200 +595,46 @@ def extract_labeled_frame_predictions(
     print(f"Processing predictions from {path_videos_new}")
     print(f"Saving results to {output_dir}")
     
-    # Process each view
+     # Process each view
     for view in views:
         print(f"\nProcessing {view}...")
         
-        # Find the CollectedData file for this view
-        collected_data_path = os.path.join(cfg_lp.data.data_dir, f"CollectedData_{view}_new.csv")
-        if not os.path.exists(collected_data_path):
-            print(f"Warning: CollectedData file not found for {view}")
+        # Load collected data
+        collected_df = load_collected_data(cfg_lp, view)
+        if collected_df is None:
             continue
-        
-        try:
-            # Load the original CollectedData file to get the index structure
-            collected_df = pd.read_csv(collected_data_path, header=[0, 1, 2], index_col=0)
-            collected_df = io_utils.fix_empty_first_row(collected_df)
-            print(f"Loaded CollectedData file with shape: {collected_df.shape}")
+
+        # Get valid indices and sequences
+        valid_indices = get_valid_indices(collected_df)
+        sequences = group_indices_by_sequence(valid_indices)
+        prediction_files = find_prediction_files(path_videos_new, view)
+        print(f"Found {len(prediction_files)} prediction files for {view}")
+
+        # Initialize combined DataFrame
+        combined_df = None
+
+        # Process each sequence
+        for sequence, indices in sequences.items():
+            print(f"\nProcessing sequence: {sequence}")
             
-            # Find all valid image indices
-            valid_indices = [idx for idx in collected_df.index 
-                            if idx not in ['bodyparts', 'coords'] 
-                            and isinstance(idx, str) 
-                            and '/' in idx]
+            sequence_pred_files = [f for f in prediction_files if sequence in os.path.basename(f)]
+            print(f"Found {len(sequence_pred_files)} prediction files for sequence {sequence}")
+
+            if not sequence_pred_files:
+                print(f"No prediction files found for sequence {sequence}")
+                continue
+
+            img_to_frame_num = extract_frame_numbers(indices)
             
-            print(f"Found {len(valid_indices)} valid indices in CollectedData")
-            
-            # Group indices by sequence
-            sequences = {}
-            for idx in valid_indices:
-                parts = idx.split('/')
-                if len(parts) >= 2:
-                    sequence = parts[1]  # e.g., "180623_000_bot"
-                    if sequence not in sequences:
-                        sequences[sequence] = []
-                    sequences[sequence].append(idx)
-            
-            print(f"Found {len(sequences)} unique sequences")
-            
-            # Find prediction files for this view
-            prediction_files = []
-            for filename in os.listdir(path_videos_new):
-                if os.path.isfile(os.path.join(path_videos_new, filename)):
-                    # Match view name as a standalone token
-                    pattern = rf"(?<![A-Z]){re.escape(view)}(?![A-Z])"
-                    if re.search(pattern, filename) and 'pixel_error' not in filename:
-                        prediction_files.append(os.path.join(path_videos_new, filename))
-            
-            print(f"Found {len(prediction_files)} prediction files for {view}")
-            
-            # Create a DataFrame for combined results
-            combined_df = None
-            
-            # Process each sequence
-            for sequence, indices in sequences.items():
-                print(f"\nProcessing sequence: {sequence}")
-                
-                # Find prediction files for this sequence
-                sequence_pred_files = [f for f in prediction_files if sequence in os.path.basename(f)]
-                print(f"Found {len(sequence_pred_files)} prediction files for sequence {sequence}")
-                
-                if not sequence_pred_files:
-                    print(f"No prediction files found for sequence {sequence}")
-                    continue
-                
-                # Process each prediction file
-                for pred_file in sequence_pred_files:
-                    print(f"Processing file: {os.path.basename(pred_file)}")
-                    
-                    try:
-                        # Load the prediction file
-                        pred_df = pd.read_csv(pred_file, header=[0, 1, 2], index_col=0)
-                        pred_df = io_utils.fix_empty_first_row(pred_df)
-                        print(f"Loaded prediction file with shape: {pred_df.shape}")
-                        
-                        # Initialize combined_df if needed
-                        if combined_df is None:
-                            combined_df = pd.DataFrame(index=collected_df.index, columns=pred_df.columns)
-                            print(f"Initialized combined DataFrame with shape: {combined_df.shape}")
-                        
-                        # Extract frame numbers from image paths
-                        img_to_frame_num = {}
-                        for idx in indices:
-                            parts = idx.split('/')
-                            if len(parts) >= 3:
-                                frame_file = parts[2]
-                                frame_match = re.search(r'img(\d+)\.png', frame_file)
-                                if frame_match:
-                                    frame_num = int(frame_match.group(1))
-                                    img_to_frame_num[idx] = frame_num
-                        
-                        # Check prediction file index structure
-                        if pred_df.index.dtype == 'int64' or all(isinstance(x, int) for x in pred_df.index if isinstance(x, (int, float))):
-                            # Numeric indices (likely frame numbers)
-                            print("Prediction file has numeric indices")
-                            
-                            # Check if these are actual frame numbers
-                            sample_frames = list(img_to_frame_num.values())[:5] if img_to_frame_num else []
-                            frame_exists = [frame in pred_df.index for frame in sample_frames]
-                            
-                            if any(frame_exists):
-                                # Direct frame number matching
-                                match_count = 0
-                                for img_path, frame_num in img_to_frame_num.items():
-                                    if frame_num in pred_df.index:
-                                        combined_df.loc[img_path] = pred_df.loc[frame_num]
-                                        match_count += 1
-                                
-                                print(f"Matched {match_count} frames by direct frame number")
-                            else:
-                                # Try position-based matching
-                                print("Indices are not direct frame numbers, trying sequential mapping")
-                                
-                                sorted_pred_indices = sorted(pred_df.index)
-                                sorted_img_paths = sorted(img_to_frame_num.keys(), key=lambda x: img_to_frame_num[x])
-                                
-                                # Check if lengths match
-                                if len(sorted_pred_indices) == len(sorted_img_paths):
-                                    print("Equal number of frames, using direct position mapping")
-                                    
-                                    for i in range(len(sorted_img_paths)):
-                                        img_path = sorted_img_paths[i]
-                                        pred_idx = sorted_pred_indices[i]
-                                        combined_df.loc[img_path] = pred_df.loc[pred_idx]
-                                    
-                                    print(f"Mapped {len(sorted_img_paths)} frames by position")
-                                else:
-                                    print(f"Warning: Number of frames doesn't match. Prediction: {len(sorted_pred_indices)}, CollectedData: {len(sorted_img_paths)}")
-                                    
-                                    min_length = min(len(sorted_img_paths), len(sorted_pred_indices))
-                                    for i in range(min_length):
-                                        img_path = sorted_img_paths[i]
-                                        pred_idx = sorted_pred_indices[i]
-                                        combined_df.loc[img_path] = pred_df.loc[pred_idx]
-                                    
-                                    print(f"Mapped {min_length} frames by position")
-                        else:
-                            # String indices
-                            print("Prediction file has string indices")
-                            
-                            # Check if indices contain sequence names
-                            seq_indices = [idx for idx in pred_df.index if isinstance(idx, str) and sequence in idx]
-                            
-                            if seq_indices:
-                                print("Indices contain sequence names")
-                                
-                                # Match by frame number in path
-                                match_count = 0
-                                for img_path, frame_num in img_to_frame_num.items():
-                                    for pred_idx in seq_indices:
-                                        pred_frame_match = re.search(r'img(\d+)\.png', pred_idx)
-                                        if pred_frame_match and int(pred_frame_match.group(1)) == frame_num:
-                                            combined_df.loc[img_path] = pred_df.loc[pred_idx]
-                                            match_count += 1
-                                            break
-                                
-                                print(f"Matched {match_count} frames by frame number in path")
-                            else:
-                                print("Warning: Could not determine how to map indices for this file")
-                    
-                    except Exception as e:
-                        print(f"Error processing prediction file {pred_file}: {e}")
-                        print(traceback.format_exc())
-            
-            # Save and evaluate combined results
-            if combined_df is not None:
-                # Add "set" column for labeled data
-                combined_df.loc[:,("set", "", "")] = "train"
-                
-                # Count non-empty rows
-                non_empty_count = combined_df.dropna(how='all').shape[0]
-                print(f"\nSuccessfully filled {non_empty_count} out of {combined_df.shape[0]} rows")
-                
-                # Save predictions
-                output_file = os.path.join(output_dir, f"predictions_{view}_new.csv")
-                combined_df.to_csv(output_file)
-                print(f"Saved predictions to {output_file}")
-                
-                # Compute metrics
-                cfg_lp_view = cfg_lp.copy()
-                cfg_lp_view.data.csv_file = [f'CollectedData_{view}_new.csv']
-                cfg_lp_view.data.view_names = [view]
-                
-                try:
-                    compute_metrics(cfg=cfg_lp_view, preds_file=[output_file], data_module=None)
-                    print(f"Successfully computed metrics for {view}")
-                except Exception as e:
-                    print(f"Error computing metrics for {view}: {str(e)}")
-                    print(traceback.format_exc())
-            else:
-                print(f"Warning: No data was combined for {view}")
-        
-        except Exception as e:
-            print(f"Error processing view {view}: {e}")
-            print(traceback.format_exc())
-    
+            for pred_file in sequence_pred_files:
+                print(f"Processing file: {os.path.basename(pred_file)}")
+                combined_df = process_prediction_file(pred_file, collected_df, img_to_frame_num, combined_df)
+
+        # Save and evaluate results
+        save_and_evaluate_results(combined_df, output_dir, view, cfg_lp)
+
     print("\nAll views processed!")
+
 
 
 def run_eks_singleview(
@@ -719,7 +735,7 @@ def run_eks_multiview(
         s_frames = [(None,None)], # Keemin wil fix 
         avg_mode = avg_mode,
         var_mode = var_mode,
-        inflate_vars = True,
+        inflate_vars = False,
         inflate_vars_kwargs = inflate_vars_kwargs,
         n_latent = n_latent,
         verbose = verbose,
