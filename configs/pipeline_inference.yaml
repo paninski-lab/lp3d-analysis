@@ -2,8 +2,8 @@
 # ask Matt about adding the views variable to the config file so we can pick the views that we have and in that way instead of iterating over files we will iterate over views - which will determine things
 
 # dataset_name: chickadee-crop
-# dataset_name: fly-anipose
-dataset_name: mirror-mouse-separate
+dataset_name: fly-anipose
+# dataset_name: mirror-mouse-separate
 
 lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_${dataset_name}.yaml
 
@@ -12,7 +12,7 @@ pipeline_seeds: 0
 
 outputs_dir: /teamspace/studios/this_studio/outputs/${dataset_name}
 
-intermediate_results_dir: results_100_5k
+intermediate_results_dir: test_100
 
 # initial training of an ensemble of networks
 train_networks:
@@ -26,20 +26,26 @@ train_networks:
   # ensemble seeds
   ensemble_seeds:
     - 0
-    - 1
-    - 2
-    - 3
-    - 4
+    # - 1
+    # - 2
+    # - 3
+    # - 4
     # - 5
     # - 6
+    
   # number of ground truth labels for training
   n_hand_labels: 
     - 100
   # model type
   model_types:
-    - supervised
+    # - supervised
     # - context
     # - semisupervised
+    # - multiview_cnn
+    # - multiview_transformer
+    # - multiview_transformer_learnable
+    - multiview_transformer_learnable_crossview
+    # think about adding multiview here 
   # run inference on videos in these directories (independent of training videos)
   inference_dirs:
     - videos_new
@@ -56,7 +62,7 @@ train_networks:
   # train_check_interval: 10
   min_steps: 5000 # need 5000 I use 500 for testing 
   max_steps: 5000 # need 5000
-  unfreezing_step: 260
+  unfreezing_step: 400 # started with 260 for supervised
   milestone_steps: [2000, 3000, 4000]
   val_check_interval: 5
   train_check_interval: 5

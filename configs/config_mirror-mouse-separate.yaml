@@ -47,7 +47,7 @@ training:
   # default- resizing only
   # dlc- imgaug pipeline implemented in DLC 2.0 package
   # dlc-top-down- dlc augmentations plus vertical and horizontal flips
-  imgaug: dlc
+  imgaug: dlc # (before it was only dlc)
   # batch size of labeled data during training
   train_batch_size: 8
   # batch size of labeled data during validation
@@ -80,12 +80,15 @@ training:
   rng_seed_data_pt: 0
   # rng seed for weight initialization
   rng_seed_model_pt: 0
+   optimizer: Adam
+  optimizer_params:
+    learning_rate: 0.001 #(1e-3)
   # learning rate scheduler
   # multisteplr | [todo - reducelronplateau]
   lr_scheduler: multisteplr
   lr_scheduler_params:
     multisteplr:
-      milestones: [150, 200, 250]
+      milestones: [2000, 3000, 4000] # (before it was [150,200,250] but it didn't really used that)
       gamma: 0.5
   uniform_heatmaps_for_nan_keypoints: true
 
@@ -99,8 +102,10 @@ model:
   # resnet50_human_jhmdb | resnet50_human_res_rle | resnet50_human_top_res
   # efficientnet_b0 | efficientnet_b1 | efficientnet_b2
   backbone: resnet50_animal_ap10k
-  # prediction mode - "heatmap" | "regression" | "heatmap_mhcrnn"
+  # prediction mode - "heatmap" | "regression" | "heatmap_mhcrnn" | "heatmap_multiview" 
   model_type: heatmap
+  # head mode - "heatmap_cnn" | "feature_transformer" | "feature_transformer_learnable" | "feature_transformer_learnable_crossview"
+  # head: feature_transformer_learnable_crossview
   # which heatmap loss to use
   # "mse" | "kl" | "js"
   heatmap_loss_type: mse

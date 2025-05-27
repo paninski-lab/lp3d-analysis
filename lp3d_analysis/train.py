@@ -7,7 +7,7 @@ import torch
 import os
 from typing import Optional
 from lightning_pose.train import train
-from lightning_pose.model import Model
+from lightning_pose.api.model import Model
 from omegaconf import DictConfig, OmegaConf
 
 # TODO: Replace with contextlib.chdir in python 3.11.

@@ -7,7 +7,9 @@ data:
   data_dir: /teamspace/studios/data/fly-anipose
   # ABSOLUTE path to unlabeled videos' directory
   video_dir: /teamspace/studios/data/fly-anipose/videos
-  # location of labels; for example script, this should be relative to `data_dir`
+  # camera calibration files location
+  camera_params_file: /teamspace/studios/data/fly-anipose/calibrations.csv
+  # location of labels; for example script, this should be relative to `data_dir`]
   csv_file:
     - CollectedData_Cam-A.csv
     - CollectedData_Cam-B.csv
@@ -22,6 +24,8 @@ data:
     - Cam-D
     - Cam-E
     - Cam-F
+  
+  
   # downsample heatmaps - 2 | 3
   downsample_factor: 2
   # total number of keypoints
@@ -102,7 +106,7 @@ training:
   # default- resizing only
   # dlc- imgaug pipeline implemented in DLC 2.0 package
   # dlc-top-down- dlc augmentations plus vertical and horizontal flips
-  imgaug: dlc
+  imgaug: dlc-mv
   # batch size of labeled data during training
   train_batch_size: 8 # for the supervised one it is 8 for the ctx 4 
   # batch size of labeled data during validation
@@ -135,12 +139,17 @@ training:
   rng_seed_data_pt: 0
   # rng seed for weight initialization
   rng_seed_model_pt: 0
+  # optimizer: Adam | AdamW.ada
+  # Recommended to use Adam for resnet backbones, and AdamW for ViT backbones.
+  optimizer: Adam
+  optimizer_params:
+    learning_rate: 0.001 #(1e-3)
   # learning rate scheduler
   # multisteplr | [todo - reducelronplateau]
   lr_scheduler: multisteplr
   lr_scheduler_params:
     multisteplr:
-      milestones: [150, 200, 250]
+      milestones: [2000, 3000, 4000] # 
       gamma: 0.5
   uniform_heatmaps_for_nan_keypoints: true
 
@@ -153,9 +162,11 @@ model:
   # resnet50_animalpose_apose | resnet50_animal_ap10k
   # resnet50_human_jhmdb | resnet50_human_res_rle | resnet50_human_top_res
   # efficientnet_b0 | efficientnet_b1 | efficientnet_b2
-  backbone: resnet50_animal_ap10k
-  # prediction mode - "heatmap" | "regression" | "heatmap_mhcrnn"
-  model_type: heatmap
+  backbone: resnet50_animal_ap10k # in general use resnet50_animal_ap10k
+  # prediction mode - "heatmap" | "regression" | "heatmap_mhcrnn" | "heatmap_multiview" 
+  model_type: heatmap_multiview
+  # head mode - "heatmap_cnn" | "feature_transformer" | "feature_transformer_learnable" | "feature_transformer_learnable_crossview"
+  head: feature_transformer_learnable_crossview # need to comment out for supervised model 
   # which heatmap loss to use
   # "mse" | "kl" | "js"
   heatmap_loss_type: mse
