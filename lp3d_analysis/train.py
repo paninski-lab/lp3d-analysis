@@ -49,7 +49,12 @@ def train_and_infer(
     assert model is not None
 
     if inference_dirs is not None:
-        if model.config.is_multi_view():
+        # Determine if this is a multiview model based on model type, not just data structure
+        model_type = model.config.cfg.model.model_type
+        is_multiview_model = model_type in ['heatmap_multiview', 'heatmap_multiview_transformer']
+        
+        if is_multiview_model: # Use multiview prediction for multiview models
+            
             # For multiview case, we need to find video files for each view
             for video_dir in inference_dirs:
                 video_path = os.path.join(cfg_lp.data.data_dir, video_dir)
@@ -149,7 +154,7 @@ def train_and_infer(
                     else:
                         print(f"Warning: Session {session_name} missing some views. Found: {list(view_files.keys())}, Required: {view_names}")
 
-        else: # for the single view case 
+        else: # for single-view models (even if multiple views exist in data)
             # Run inference on all InD/OOD videos and compute unsupervised metrics
             for video_dir in inference_dirs:
                 video_path = os.path.join(cfg_lp.data.data_dir, video_dir)
