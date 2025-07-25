@@ -12,7 +12,7 @@ pipeline_seeds: 0
 
 outputs_dir: /teamspace/studios/this_studio/outputs/${dataset_name}
 
-intermediate_results_dir: test_100
+intermediate_results_dir: test_100_multiview
 
 # initial training of an ensemble of networks
 train_networks:
@@ -26,8 +26,8 @@ train_networks:
   # ensemble seeds
   ensemble_seeds:
     - 0
-    # - 1
-    # - 2
+    - 1
+    - 2
     # - 3
     # - 4
     # - 5
@@ -42,15 +42,18 @@ train_networks:
     # - context
     # - semisupervised
     # - multiview_cnn
-    # - multiview_transformer
+    # - multiview_transformer_head
     # - multiview_transformer_learnable
-    - multiview_transformer_learnable_crossview
+    # - multiview_transformer_learnable_crossview
+    # - multiview_transformer
+    - mvt_3d_loss
+    # - mvt_cross_view_head
     # think about adding multiview here 
   # run inference on videos in these directories (independent of training videos)
   inference_dirs:
-    - videos_new
+    # - videos_new
     # - videos-for-each-labeled-frame
-    # - videos_debug
+    - videos_debug
     # - videos_ind
     # - videos_paper
 
@@ -62,9 +65,9 @@ train_networks:
   # train_check_interval: 10
   min_steps: 5000 # need 5000 I use 500 for testing 
   max_steps: 5000 # need 5000
-  unfreezing_step: 400 # started with 260 for supervised
-  milestone_steps: [2000, 3000, 4000]
-  val_check_interval: 5
+  unfreezing_step: 400 # started with 260 for supervised - should be 400 for transformer 
+  milestone_steps: [2000, 3000, 4000] # in general we have [2000, 3000, 4000]
+  val_check_interval: 10 # was 5 
   train_check_interval: 5
 
 # post-processing options

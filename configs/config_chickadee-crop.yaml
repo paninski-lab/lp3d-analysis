@@ -1,14 +1,18 @@
+#ToDO: recall that the learning rate needs to change dependeing on what we train!! 
 data:
   # resize dimensions to streamline model creation
   image_resize_dims:
     height: 256
     width: 256
   # ABSOLUTE path to data directory
-  data_dir: /teamspace/studios/data/chickadee-crop
+  data_dir: /tmp/data/chickadee-crop
+  # data_dir: /teamspace/studios/data/chickadee-crop
   # ABSOLUTE path to unlabeled videos' directory
-  video_dir: /teamspace/studios/data/chickadee-crop/videos
+  video_dir: /tmp/data/chickadee-crop/videos
+  # video_dir: /teamspace/studios/data/chickadee-crop/videos
   # camera calibration files location
-  camera_params_file: /teamspace/studios/data/chickadee-crop/calibrations.csv
+  # camera_params_file: /tmp/data/chickadee-crop/calibrations.csv
+  # camera_params_file: /teamspace/studios/data/chickadee-crop/calibrations.csv
   # location of labels; for example script, this should be relative to `data_dir`
   csv_file:
     - CollectedData_lBack.csv
@@ -17,6 +21,15 @@ data:
     - CollectedData_rBack.csv
     - CollectedData_rFront.csv
     - CollectedData_rTop.csv
+  
+  bbox_file:
+    - bboxes_lBack.csv
+    - bboxes_lFront.csv
+    - bboxes_lTop.csv
+    - bboxes_rBack.csv
+    - bboxes_rFront.csv
+    - bboxes_rTop.csv
+
   view_names:
     - lBack
     - lFront
@@ -139,7 +152,7 @@ training:
   # Recommended to use Adam for resnet backbones, and AdamW for ViT backbones.
   optimizer: Adam
   optimizer_params:
-    learning_rate: 0.001 #(1e-3)
+    learning_rate: 0.00005  #0.001 for the resnet50 #(1e-3)0.00005
   # learning rate scheduler
   # multisteplr | [todo - reducelronplateau]
   lr_scheduler: multisteplr
@@ -158,11 +171,11 @@ model:
   # resnet50_animalpose_apose | resnet50_animal_ap10k
   # resnet50_human_jhmdb | resnet50_human_res_rle | resnet50_human_top_res
   # efficientnet_b0 | efficientnet_b1 | efficientnet_b2
-  backbone: resnet50_animal_ap10k
-  # prediction mode - "heatmap" | "regression" | "heatmap_mhcrnn" | "heatmap_multiview" 
-  model_type: heatmap # ( supposed to be heatmap for supervised)
+  backbone: vits_dino #vits_dino #resnet50_animal_ap10k
+  # prediction mode - "heatmap" | "regression" | "heatmap_mhcrnn" | "heatmap_multiview" | "heatmap_multiview_transformer"
+  model_type: heatmap_multiview_transformer # ( supposed to be heatmap for supervised)
   # head mode - "heatmap_cnn" | "feature_transformer" | "feature_transformer_learnable" | "feature_transformer_learnable_crossview"
-  # head: feature_transformer_learnable_crossview
+  head: heatmap_cnn
   # which heatmap loss to use
   # "mse" | "kl" | "js"
   heatmap_loss_type: mse

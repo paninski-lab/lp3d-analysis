@@ -4,11 +4,14 @@ data:
     height: 256 # if doesn't work well try both on 384
     width: 256
   # ABSOLUTE path to data directory
-  data_dir: /teamspace/studios/data/fly-anipose
+  data_dir: /tmp/data/fly-anipose
+  # data_dir: /teamspace/studios/data/fly-anipose
   # ABSOLUTE path to unlabeled videos' directory
-  video_dir: /teamspace/studios/data/fly-anipose/videos
+  video_dir: /tmp/data/fly-anipose/videos
+  # video_dir: /teamspace/studios/data/fly-anipose/videos
   # camera calibration files location
-  camera_params_file: /teamspace/studios/data/fly-anipose/calibrations.csv
+  camera_params_file: /tmp/data/fly-anipose/calibrations.csv
+  # camera_params_file: /teamspace/studios/data/fly-anipose/calibrations.csv
   # location of labels; for example script, this should be relative to `data_dir`]
   csv_file:
     - CollectedData_Cam-A.csv
@@ -106,13 +109,18 @@ training:
   # default- resizing only
   # dlc- imgaug pipeline implemented in DLC 2.0 package
   # dlc-top-down- dlc augmentations plus vertical and horizontal flips
-  imgaug: dlc-mv
+  imgaug: dlc # dlc-mv for multiple views 
+  # Control whether to use 3D augmentations for multiview models when camera parameters are present
+  # True: Use dlc-mv (no 2D geometric transforms) when camera params exist
+  # False: Use specified imgaug pipeline regardless of camera params
+  # null/None: Default behavior (use dlc-mv when camera params exist)
+  use_3d_augmentations: True  # This allows you to use regular dlc augmentations even with camera params
   # batch size of labeled data during training
   train_batch_size: 8 # for the supervised one it is 8 for the ctx 4 
   # batch size of labeled data during validation
   val_batch_size: 16
   # batch size of labeled data during test
-  test_batch_size: 16
+  test_batch_size: 1 #16
   # fraction of labeled data used for training
   train_prob: 0.95
   # fraction of labeled data used for validation (remaining used for test)
@@ -143,30 +151,30 @@ training:
   # Recommended to use Adam for resnet backbones, and AdamW for ViT backbones.
   optimizer: Adam
   optimizer_params:
-    learning_rate: 0.001 #(1e-3)
+    learning_rate: 0.00005 #(1e-3) # was 0.001 # 0.00005
   # learning rate scheduler
   # multisteplr | [todo - reducelronplateau]
   lr_scheduler: multisteplr
   lr_scheduler_params:
     multisteplr:
-      milestones: [2000, 3000, 4000] # 
+      milestones: [2000, 3000, 4000] 
       gamma: 0.5
   uniform_heatmaps_for_nan_keypoints: true
 
 model:
   # list of unsupervised losses
-  # "pca_singleview" | "pca_multiview" | "temporal" | "unimodal_mse" | "unimodal_kl"
+  # "pca_singleview" | "pca_multiview" | "temporal" | "unimodal_mse" | "unimodal_kl" | "supervised_pairwise_projections"
   losses_to_use: []
   # backbone network:
   # resnet18 | resnet34 | resnet50 | resnet101 | resnet152 | resnet50_contrastive
   # resnet50_animalpose_apose | resnet50_animal_ap10k
   # resnet50_human_jhmdb | resnet50_human_res_rle | resnet50_human_top_res
   # efficientnet_b0 | efficientnet_b1 | efficientnet_b2
-  backbone: resnet50_animal_ap10k # in general use resnet50_animal_ap10k
+  backbone: vits_dino # in general use resnet50_animal_ap10k
   # prediction mode - "heatmap" | "regression" | "heatmap_mhcrnn" | "heatmap_multiview" 
-  model_type: heatmap_multiview
-  # head mode - "heatmap_cnn" | "feature_transformer" | "feature_transformer_learnable" | "feature_transformer_learnable_crossview"
-  head: feature_transformer_learnable_crossview # need to comment out for supervised model 
+  model_type: heatmap_multiview_transformer #heatmap # this is for the vitb_imagenet
+  # head mode - "heatmap_cnn" | "feature_transformer" | "feature_transformer_learnable" | "feature_transformer_learnable_crossview" | "trans_fusion"
+  head: heatmap_cnn #heatmap_cnn #feature_transformer_learnable_crossview # need to comment out for supervised model 
   # which heatmap loss to use
   # "mse" | "kl" | "js"
   heatmap_loss_type: mse
@@ -181,7 +189,7 @@ dali:
     train: 
       sequence_length: 8 # number of consecutive frames 
     predict:
-      sequence_length: 128 # for videos - number of consecutive frames for inference each video alone 
+      sequence_length: 16 #128 # for videos - number of consecutive frames for inference each video alone 
   context:
     train:
       batch_size: 16
@@ -217,6 +225,14 @@ losses:
     # nan removal value.
     # (in prob; heatmaps with max prob values are removed)
     prob_threshold: 0.05
+  
+  supervised_pairwise_projections:
+    # weight in front of pairwise projection loss
+    log_weight: 5.0
+    # absolute error (in pixels) below which pairwise projection loss is zeroed out; if not null, this
+    # parameter takes precedence over `empirical_epsilon_percentile`
+    epsilon: null
+
 
 eval:
   # predict? used in scripts/train_hydra.py

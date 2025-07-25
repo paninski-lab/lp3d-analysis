@@ -24,9 +24,12 @@ from lp3d_analysis.post_process_full_videos import  post_process_ensemble_videos
 VALID_MODEL_TYPES = [
     'supervised',
     'context',
-    'multiview_transformer',
+    'multiview_transformer_head',# this is for the model head only 
     'multiview_transformer_learnable',
     'multiview_transformer_learnable_crossview',
+    'multiview_transformer',
+    'mvt_cross_view_head',
+    'mvt_3d_loss',
 ]
 
 
@@ -221,6 +224,12 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
             "rng_seed_data_pt": rng_seed,
             "rng_seed_model_pt": rng_seed,
             "train_frames": n_hand_labels,
+            # Control 3D augmentations for multiview models:
+            "use_3d_augmentations": True,   # Force dlc-mv when camera params exist
+            # "use_3d_augmentations": False,  # Use specified imgaug regardless of camera params
+            # "use_3d_augmentations": null,   # Default behavior (use dlc-mv when camera params exist)
+            # Note: When supervised_pairwise_projections loss is used, 3D augmentations are automatically forced
+            # "use_3d_augmentations": null,  # Let the system automatically decide based on loss configuration
         }
     }]
     if model_type == 'supervised':
@@ -253,7 +262,7 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
             },
             
         })
-    elif model_type == 'multiview_transformer':
+    elif model_type == 'multiview_transformer_head':
         cfg_overrides.append({
             "model": {
                 "model_type": "heatmap_multiview",
@@ -281,7 +290,38 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
             },
             
         })
-    
+    elif model_type == 'multiview_transformer':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer",
+                "losses_to_use": [],
+                "head": "heatmap_cnn"
+            },
+            
+        })
+
+    elif model_type == 'mvt_3d_loss':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer",
+                "losses_to_use": [],
+                "head": "heatmap_cnn"
+            },
+            
+        })
+
+    elif model_type == 'mvt_cross_view_head':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer",
+                "losses_to_use": [],
+                "head": "feature_transformer_learnable_crossview"
+            },
+            "data": {
+                "downsample_factor": 1,  # Set to 1 to match head configuration
+            },
+        })
+
     else:
         raise ValueError(
             f'{model_type} is not a valid model type in pipeline cfg; must choose'
