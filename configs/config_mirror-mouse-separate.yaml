@@ -5,6 +5,7 @@ data:
     width: 256
   # ABSOLUTE path to data directory
   data_dir: /tmp/data/mirror-mouse-separate
+  # data_dir: /teamspace/studios/this_studio/pseudo_labeled_dataset_mouse_21k_varinf/mirror-mouse-separate
   # ABSOLUTE path to unlabeled videos' directory
   video_dir: /tmp/data/mirror-mouse-separate/videos
   # location of labels; for example script, this should be relative to `data_dir`
@@ -34,7 +35,8 @@ data:
   # columns that correspond to keypoints only labeled in a single view are omitted
   # TODO: what if a keypoint is labeled in more than 1 but not all views?
   # this info is only used for the multiview pca loss
-  mirrored_column_matches: [0, 1, 2, 3, 4, 5, 6]
+  # mirrored_column_matches: [0, 1, 2, 3, 4, 5, 6]
+  mirrored_column_matches: [[0, 1, 2, 3, 4, 5, 6], [0, 1, 2, 3, 4, 5, 6]]  # [top_view_keypoints, bot_view_keypoints]
   columns_for_singleview_pca: [0, 1, 2, 3, 4, 5, 6]
 
   skeleton:
@@ -93,9 +95,16 @@ training:
       gamma: 0.5
   uniform_heatmaps_for_nan_keypoints: true
 
+  patch_mask:
+    init_step: 700
+    final_step: 5000
+    init_ratio: 0.0
+    final_ratio: 0.0 # to disable patch masking set to 0.0
+
 model:
   # list of unsupervised losses
   # "pca_singleview" | "pca_multiview" | "temporal" | "unimodal_mse" | "unimodal_kl"
+  # losses_to_use: ["pca_multiview"]
   losses_to_use: []
   # backbone network:
   # resnet18 | resnet34 | resnet50 | resnet101 | resnet152 | resnet50_contrastive
@@ -104,7 +113,7 @@ model:
   # efficientnet_b0 | efficientnet_b1 | efficientnet_b2
   backbone: vits_dino #resnet50_animal_ap10k #resnet50_animal_ap10k
   # prediction mode - "heatmap" | "regression" | "heatmap_mhcrnn" | "heatmap_multiview" 
-  model_type: heatmap_multiview_transformer #heatmap_multiview_transformer
+  model_type: heatmap_multiview_transformer  #heatmap_multiview_transformer
   # head mode - "heatmap_cnn" | "feature_transformer" | "feature_transformer_learnable" | "feature_transformer_learnable_crossview"
   head: heatmap_cnn
   # which heatmap loss to use
@@ -112,6 +121,14 @@ model:
   heatmap_loss_type: mse
   # tt expt name
   model_name: test_model
+
+
+# Latent models configuration for post-processing
+# latent_models:
+#   # PCA model path for variance inflation in EKS multiview
+#   pca_model_path: /teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_mirror-mouse-separate.pkl
+#   # FA model path for variance inflation in EKS multiview - set to null if not using FA model for this dataset
+#   fa_model_path: /teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_mirror-mouse-separate.pkl  # Set to null if not using FA model for this dataset
 
 dali:
   general:
@@ -131,7 +148,7 @@ losses:
   # loss = projection onto the discarded eigenvectors
   pca_multiview:
     # weight in front of PCA loss
-    log_weight: 5.0
+    log_weight: 5.0 # Reduced from 5.0 to increase actual weight
     # predictions whould lie within the low-d subspace spanned by these components
     components_to_keep: 3
     # absolute error (in pixels) below which pca loss is zeroed out; if not null, this
@@ -190,6 +207,6 @@ callbacks:
   anneal_weight:
     attr_name: total_unsupervised_importance
     init_val: 0.0
-    increase_factor: 0.01
+    increase_factor: 0.01 # was 0.01
     final_val: 1.0
-    freeze_until_epoch: 0
+    freeze_until_epoch: 0 # was 0 

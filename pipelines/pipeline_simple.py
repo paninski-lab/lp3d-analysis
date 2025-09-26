@@ -8,12 +8,14 @@ from lp3d_analysis.io import load_cfgs
 from lp3d_analysis.train import train_and_infer
 from lp3d_analysis.utils import extract_ood_frame_predictions
 # from lp3d_analysis.post_process import  post_process_ensemble_videos , post_process_ensemble_labels #post_process_ensemble_labels,
+from lp3d_analysis.post_process import post_process_ensemble_labels #post_process_ensemble_labels,
 from lp3d_analysis.post_process_full_videos import  post_process_ensemble_videos, extract_labeled_frame_predictions #post_process_ensemble_labels,
 # from lp3d_analysis.post_process_concat import  post_process_ensemble_videos, post_process_ensemble_labels_concat
 # from lp3d_analysis.post_process_concat_bbox import  post_process_ensemble_videos, post_process_ensemble_labels_concat
 # from lp3d_analysis.post_process_concat_bbox_short_version_shorter import  post_process_ensemble_videos, post_process_ensemble_labels_concat
 # from lp3d_analysis.post_process_no_concat import  post_process_ensemble_videos, post_process_ensemble_labels
-
+# from lp3d_analysis.post_process_concat_bbox_aug26 import post_process_ensemble_labels_concat #post_process_ensemble_labels,
+# from lp3d_analysis.post_process_full_videos import extract_labeled_frame_predictions #post_process_ensemble_labels,
 
 # TODO
 # - before train_and_infer, will be nice to put cfg updates in their own function
@@ -30,6 +32,8 @@ VALID_MODEL_TYPES = [
     'multiview_transformer',
     'mvt_cross_view_head',
     'mvt_3d_loss',
+    'mvt_unsupervised_losses',
+    'mvt_semisupervised',  # New model type for semi-supervised training with unsupervised losses
 ]
 
 
@@ -83,6 +87,7 @@ def pipeline(config_file: str, for_seed: int | None = None) -> None:
                             data_dir=data_dir,
                             results_dir=results_dir,
                             overwrite=cfg_pipe.train_networks.overwrite,
+                            # overwrite=True,
                             video_dir='videos-for-each-labeled-frame',
                         )
 
@@ -105,8 +110,6 @@ def pipeline(config_file: str, for_seed: int | None = None) -> None:
                         views= list(cfg_lp.data.view_names), # before it was not a list... 
                         mode=mode,
                         inference_dirs=cfg_pipe.train_networks.inference_dirs,
-                        # n_latent = mode_config.n_latent if hasattr(mode_config, 'n_latent') else None,
-                        # n_latent = mode_config.n_latent if hasattr(mode_config, 'n_latent') else 3,
                         overwrite=mode_config.overwrite,
                         **({"n_latent": mode_config.n_latent} if hasattr(mode_config, 'n_latent') else {})
                     )
@@ -143,6 +146,24 @@ def pipeline(config_file: str, for_seed: int | None = None) -> None:
                             )
                         else:
                             print(f"Skipping {inference_dir} as it does not exist or is empty so we cannot extract labeled frames")
+
+    for mode, mode_config in cfg_pipe.post_processing_labels.items():
+        for model_type in cfg_pipe.train_networks.model_types:
+            for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
+                if mode_config.run: # if the mode is mean or median or eks_singleview 
+                    #print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}"
+                    # cfg_lp_copy = make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, 0)
+                    post_process_ensemble_labels( # remember I changed that for a second 
+                        cfg_lp=cfg_lp_copy.copy(),
+                        results_dir=results_dir,
+                        model_type=model_type,
+                        n_labels= n_hand_labels,
+                        seed_range=(cfg_pipe.train_networks.ensemble_seeds[0], cfg_pipe.train_networks.ensemble_seeds[-1]),
+                        views= list(cfg_lp.data.view_names), # before it was not a list... 
+                        mode=mode,
+                        inference_dirs=cfg_pipe.train_networks.inference_dirs,
+                        overwrite=mode_config.overwrite,
+                    )
 
     # # Add processing of labeled frames after post-processing videos
     # if hasattr(cfg_pipe, "post_processing_labeled_frames") and cfg_pipe.post_processing_labeled_frames.run:
@@ -225,11 +246,7 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
             "rng_seed_model_pt": rng_seed,
             "train_frames": n_hand_labels,
             # Control 3D augmentations for multiview models:
-            "use_3d_augmentations": True,   # Force dlc-mv when camera params exist
-            # "use_3d_augmentations": False,  # Use specified imgaug regardless of camera params
-            # "use_3d_augmentations": null,   # Default behavior (use dlc-mv when camera params exist)
-            # Note: When supervised_pairwise_projections loss is used, 3D augmentations are automatically forced
-            # "use_3d_augmentations": null,  # Let the system automatically decide based on loss configuration
+            "imagug_3d": cfg_lp.training.get("imagug_3d", None),  # Read from config file
         }
     }]
     if model_type == 'supervised':
@@ -309,6 +326,15 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
             },
             
         })
+    
+    elif model_type == 'mvt_unsupervised_losses':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer",
+                "losses_to_use": ["pca_multiview"],
+                "head": "heatmap_cnn"
+            },
+        })
 
     elif model_type == 'mvt_cross_view_head':
         cfg_overrides.append({
@@ -319,6 +345,18 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
             },
             "data": {
                 "downsample_factor": 1,  # Set to 1 to match head configuration
+            },
+        })
+
+    elif model_type == 'mvt_semisupervised':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer",
+                "losses_to_use": ["pca_multiview"],  # Only PCA multiview loss
+                "head": "heatmap_cnn"  # Use heatmap_cnn head
+            },
+            "data": {
+                "downsample_factor": 2,  # Set to 2 for heatmap_cnn head
             },
         })
 
@@ -333,6 +371,9 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
     milestone_steps = cfg_pipe.train_networks.milestone_steps
     unfreezing_step = cfg_pipe.train_networks.unfreezing_step
     val_check_interval = cfg_pipe.train_networks.val_check_interval
+    
+    # Parse curriculum learning parameters from training config
+    patch_mask_config = cfg_lp.training.get("patch_mask", {})
     cfg_overrides.append({
         "training": {
             "min_steps": min_steps,
@@ -343,6 +384,7 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
             "check_val_every_n_epoch": None,
             "unfreezing_step": unfreezing_step,
             "unfreezing_epoch": None,
+            "patch_mask": patch_mask_config,  # Pass the entire patch_mask config
             "lr_scheduler_params": {
                 "multisteplr": {
                     "milestone_steps": milestone_steps,

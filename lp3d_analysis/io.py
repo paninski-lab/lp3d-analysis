@@ -262,3 +262,104 @@ def group_directories_by_sequence(views: List[str], seed_dir: str, inference_dir
             sequences[sequence_key][view] = dir_name
     
     return sequences
+
+
+def load_camera_parameters(camera_params_dir: str, session_name: str):
+    """Load camera parameters for a session."""
+    from lightning_pose.data.cameras import CameraGroup
+    from pathlib import Path
+    
+    # Remove .short from session name for calibration files
+    base_session_name = session_name.replace('.short', '')
+    camera_params_file = Path(camera_params_dir) / f"{base_session_name}.toml"
+    
+    if not camera_params_file.exists():
+        print(f"Camera parameters file not found: {camera_params_file}")
+        return None
+    
+    try:
+        camera_group = CameraGroup.load(str(camera_params_file))
+        print(f"Loaded camera parameters for session: {base_session_name}")
+        return camera_group
+    except Exception as e:
+        print(f"Failed to load camera parameters for session {base_session_name}: {e}")
+        return None
+
+
+def load_existing_data_with_split(existing_data_dir: str, view_names: list[str], 
+                                 train_probability: float = 0.95, val_probability: float = 0.05,
+                                 torch_seed: int = 0, train_frames: int = None):
+    """Load existing data with train/val split and return both filtered and original data."""
+    from pathlib import Path
+    from lightning_pose.data.utils import split_sizes_from_probabilities
+    from torch.utils.data import random_split
+    import torch
+    
+    if not existing_data_dir:
+        return None
+    
+    data_dir = Path(existing_data_dir)
+    all_data = {}
+    total_frames = None
+    
+    print("Loading existing labeled data...")
+    
+    for view_name in view_names:
+        labeled_data_path = data_dir / f"CollectedData_{view_name}.csv"
+        df = pd.read_csv(labeled_data_path, header=[0, 1, 2], index_col=0)
+        df = io_utils.fix_empty_first_row(df)
+        all_data[view_name] = df
+        if total_frames is None:
+            total_frames = len(df)
+    
+    if not all_data:
+        return None
+    
+    print(f"Creating train/val split: {train_probability:.1%} train, {val_probability:.1%} val (seed: {torch_seed})")
+    
+    split_sizes = split_sizes_from_probabilities(total_frames, train_probability=train_probability, 
+                                               val_probability=val_probability, test_probability=0.0)
+    train_size, val_size, test_size = split_sizes
+    
+    train_idxs, val_idxs, _ = random_split(
+        range(total_frames), split_sizes, 
+        generator=torch.Generator().manual_seed(torch_seed)
+    )
+    
+    train_indices = list(train_idxs)
+    val_indices = list(val_idxs)
+    
+    # Apply train_frames limit
+    if train_frames and train_frames < len(train_indices):
+        train_indices = train_indices[:train_frames]
+        print(f"Limited training to {len(train_indices)} frames")
+    
+    all_indices = sorted(train_indices + val_indices)
+    print(f"Using {len(train_indices)} train + {len(val_indices)} val = {len(all_indices)} total")
+    
+    # Create both filtered and original data
+    filtered_data = {}
+    original_data = {}
+    
+    for view_name, df in all_data.items():
+        filtered_df = df.iloc[all_indices]
+        
+        filtered_data[view_name] = {
+            'data': filtered_df,
+            'total_frames': len(filtered_df),
+            'image_paths': filtered_df.index.tolist(),
+            'train_indices': train_indices,
+            'val_indices': val_indices,
+            'all_indices': all_indices
+        }
+        
+        # Original data for frame exclusion
+        original_data[view_name] = {
+            'data': df,
+            'total_frames': len(df),
+            'image_paths': df.index.tolist()
+        }
+        
+        print(f"{view_name}: {len(df)} total → {len(filtered_df)} selected frames")
+    
+    return {'filtered': filtered_data, 'original': original_data}

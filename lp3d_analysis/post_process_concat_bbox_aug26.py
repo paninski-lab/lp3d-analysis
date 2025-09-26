@@ -19,33 +19,46 @@ from lightning_pose.utils import io as io_utils
 from lightning_pose.utils.scripts import (
     compute_metrics,
 )
-from lightning_pose.utils import io as io_utils
 
-from eks.singlecam_smoother import ensemble_kalman_smoother_singlecam, fit_eks_singlecam
-from eks.multicam_smoother import ensemble_kalman_smoother_multicam
-from eks.utils import convert_lp_dlc, format_data, make_dlc_pandas_index
-from eks.core import jax_ensemble
-from eks.marker_array import MarkerArray, input_dfs_to_markerArray
-
+# lp3d_analysis modules
+from lp3d_analysis.io import (
+    collect_files_by_token,
+    process_predictions,
+    setup_ensemble_dirs,
+    get_original_structure,
+    collect_csv_files_by_seed,
+    group_directories_by_sequence
+)
 from lp3d_analysis.utils import (
     add_variance_columns,
     fill_ensemble_results,
+    process_final_predictions,
     prepare_uncropped_csv_files,
     generate_cropped_csv_file,
+    concatenate_csv_files,
 )
 
-from lp3d_analysis.io import (
-    # collect_files_by_token,
-    process_predictions,
-    setup_ensemble_dirs,
-    # get_original_structure,
-    # collect_csv_files_by_seed,
-    # group_directories_by_sequence
-)
+# lightning_pose utilities
+from lightning_pose.utils import io as io_utils
 
-'''
-This is loading the pca and FA objects from config files
-'''
+# eks modules - smoothing
+from eks.singlecam_smoother import ensemble_kalman_smoother_singlecam
+from eks.multicam_smoother import ensemble_kalman_smoother_multicam
+
+# eks modules - utilities and core
+from eks.utils import  format_data  # convert_lp_dlc, make_dlc_pandas_index
+from eks.core import jax_ensemble
+from eks.marker_array import MarkerArray, input_dfs_to_markerArray
+
+
+# # loading pca objects and fa objects if necessart
+# # pca_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_mirror-mouse-separate.pkl"
+# # pca_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_fly.pkl"
+# pca_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_chickadee-crop_6pcs_new.pkl"
+
+# # fa_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_mirror-mouse-separate.pkl"
+# # fa_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/fa_object_inD_fly.pkl"
+# fa_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_chickadee-crop_6pcs_new.pkl"
 
 class CustomUnpickler(pickle.Unpickler):
     """Custom unpickler to handle special model classes"""
@@ -93,7 +106,13 @@ def load_models(pca_path=None, fa_path=None):
     
     return pca_object, fa_object
 
-def _load_latent_models_from_config(cfg_lp, pca_object=None, fa_object=None):
+# Load PCA and FA models
+if 'pca_model_path' in locals() and pca_model_path:
+    pca_object, _ = load_models(pca_path=pca_model_path)
+if 'fa_model_path' in locals() and fa_model_path:
+    _, fa_object = load_models(fa_path=fa_model_path)
+
+def _load_latent_models(cfg_lp, pca_object=None, fa_object=None):
     """Helper function to load PCA and FA models from config if not provided"""
     try:
         if pca_object is None and hasattr(cfg_lp, 'latent_models'):
@@ -125,7 +144,6 @@ def _load_latent_models_from_config(cfg_lp, pca_object=None, fa_object=None):
     return pca_object, fa_object
 
 
-
 def _get_bbox_path_fn(p: Path, results_dir: Path, data_dir: Path) -> Path:
     """Given some preds file `p` and `results_dir`, it will return p's
     corresponding bbox path in the data directory."""
@@ -139,8 +157,8 @@ def _get_bbox_path_fn(p: Path, results_dir: Path, data_dir: Path) -> Path:
     relative_p = Path(p).relative_to(model_dir)
     p_in_data_dir = data_dir / relative_p
     bbox_path = p_in_data_dir.with_stem(p.stem + "_bbox")
-    return bbox_path
 
+    return bbox_path
 
 def process_ensemble_frames(
     all_pred_files: List[str],
@@ -204,6 +222,254 @@ def process_ensemble_frames(
     return results_df
 
 
+def save_results_with_bbox(
+    result_df: pd.DataFrame,
+    output_path: str,
+    filename: str,
+    bbox_file: Optional[str] = None,
+    img_height: int = 320,
+    img_width: int = 320
+) -> None:
+    """Save result DataFrame, handling both cropped and uncropped versions if bbox is available."""
+    os.makedirs(output_path, exist_ok=True)
+    
+    if bbox_file and os.path.exists(bbox_file):
+        # Save uncropped result first, then generate cropped version
+        uncropped_file = os.path.join(output_path, f"{filename}_uncropped.csv")
+        result_df.to_csv(uncropped_file)
+        
+        cropped_file = os.path.join(output_path, f"{filename}.csv")
+        generate_cropped_csv_file(
+            input_csv_file=uncropped_file,
+            input_bbox_file=bbox_file,
+            output_csv_file=cropped_file,
+            img_height=img_height,
+            img_width=img_width,
+            mode="subtract"
+        )
+    else:
+        # No bbox file, save result directly
+        result_file = os.path.join(output_path, f"{filename}.csv")
+        result_df.to_csv(result_file)
+
+# -----------------------------------------------------------------------------
+# Higher-level processing functions 
+# -----------------------------------------------------------------------------
+
+def process_view_csv_files(
+    view: str, 
+    dir_name: str, 
+    seed_dirs: List[str], 
+    inference_dir: str,
+    output_dir: str, 
+    sequence_key: str, 
+    get_bbox_path_fn
+) -> List[str]:
+    """Process CSV files for a given view and create temp files."""
+    temp_files = []
+    
+    # Collect and group CSV files by seed
+    csv_files_by_seed = collect_csv_files_by_seed(
+        view, dir_name, seed_dirs, inference_dir
+    )
+    
+    # Process each seed's CSV files
+    for seed_idx, csv_files in csv_files_by_seed.items():
+        # Find bbox files if needed
+        bbox_files = []
+        if get_bbox_path_fn is not None:
+            bbox_files = [str(get_bbox_path_fn(Path(csv_file))) for csv_file in csv_files]
+            bbox_files = [bf for bf in bbox_files if os.path.exists(bf)]
+            
+            if bbox_files:
+                bbox_files = sorted(
+                    bbox_files,
+                    key=lambda x: int(os.path.splitext(os.path.basename(x))[0].replace("img", "").replace("_bbox", ""))
+                )
+                print(f" the order of the bbox files for validation is {bbox_files}")
+        
+        # Get uncropped files (either from original or by adding bbox offsets)
+        uncropped_files = prepare_uncropped_csv_files(csv_files, get_bbox_path_fn) if bbox_files else csv_files
+        if not uncropped_files:
+            print(f"Warning: No uncropped files for view {view}, seed {seed_idx}")
+            continue
+        
+        # Concatenate uncropped files
+        concat_df = concatenate_csv_files(uncropped_files, is_marker_file=True)
+        
+        if concat_df.empty:
+            continue
+            
+        # Save concatenated file
+        temp_file = os.path.join(output_dir, f"temp_{view}_{seed_idx}_{sequence_key}.csv")
+        concat_df.to_csv(temp_file)
+        temp_files.append(temp_file)
+        
+        # Process bbox files if available
+        if bbox_files:
+            concat_bbox_df = concatenate_csv_files(bbox_files, is_marker_file=False)
+            bbox_temp_file = os.path.join(output_dir, f"temp_bbox_{view}_{seed_idx}_{sequence_key}.csv")
+            concat_bbox_df.to_csv(bbox_temp_file)
+    
+    return temp_files
+
+def process_multiview_directories_concat(
+    views: List[str],
+    seed_dirs: List[str],
+    inference_dir: str,
+    output_dir: str,
+    mode: str,
+    pca_object = None,
+    fa_object = None,
+    get_bbox_path_fn: Callable[[Path, ], Path] | None = None,
+) -> None:
+    """Process multiview directories by concatenating CSV files and applying Multiview EKS."""
+    print(f"seed dirs: {seed_dirs}")
+    # Setup FA parameters for variance inflation if available
+    inflate_vars_kwargs = {}
+    if fa_object is not None:
+        print("Using FA object for variance inflation")
+        inflate_vars_kwargs = {
+            'loading_matrix': fa_object.components_.T,
+            'mean': np.zeros_like(fa_object.mean_)  # Avoid centering twice
+        }
+    else:
+        print("No FA object available for variance inflation")
+    
+    # Group directories by sequence across views
+    sequences = group_directories_by_sequence(views, seed_dirs[0], inference_dir)
+    
+    # Process each sequence
+    for sequence_key, view_dirs in sequences.items():
+        all_view_files = {}
+        
+        # Process each view in the sequence
+        for view, dir_name in view_dirs.items():
+            print(f"Processing view {view} directory: {dir_name}")
+            view_output_path = os.path.join(output_dir, dir_name)
+            os.makedirs(view_output_path, exist_ok=True)
+            
+            # Process CSV files for this view and create temp files
+            temp_files = process_view_csv_files(
+                view, dir_name, seed_dirs, inference_dir, 
+                output_dir, sequence_key, get_bbox_path_fn
+            )
+            
+            if temp_files:
+                all_view_files[view] = temp_files
+
+        # Collect all files from all views
+        all_files = []
+        for view_files in all_view_files.values():
+            all_files.extend(view_files)
+
+        # Format all data together with all camera names
+        if all_files:
+            input_dfs_list, keypoint_names = format_data(
+                input_source=all_files,
+                camera_names=views
+            )
+        
+        if not input_dfs_list:
+            print(f"No valid data found for sequence {sequence_key}")
+            continue
+            
+        print(f"Running EKS multiview on {len(input_dfs_list)} DataFrames, corresponding to the number of views: {len(views)}")
+        results_dfs = run_eks_multiview(
+            markers_list=input_dfs_list,
+            keypoint_names=keypoint_names,
+            views=views,
+            quantile_keep_pca=50,
+            pca_object=pca_object,
+            inflate_vars_kwargs=inflate_vars_kwargs
+        )
+        
+        # Save results for each view
+        for view, result_df in results_dfs.items():
+            view_dir = view_dirs[view]
+            view_output_path = os.path.join(output_dir, view_dir)
+            
+            # Find bbox file if available
+            bbox_file = None
+            if get_bbox_path_fn is not None:
+                # seed_idx = list(csv_files_by_seed.keys())[0] if csv_files_by_seed else 0
+                # try to get the first seed
+                seed_idx = seed_dirs[0].split("_")[-1]
+                print(f"Using seed index {seed_idx} for bbox file")
+
+                bbox_file = os.path.join(output_dir, f"temp_bbox_{view}_{seed_idx}_{sequence_key}.csv")
+                if not os.path.exists(bbox_file):
+                    bbox_file = None
+            
+            # Save results
+            save_results_with_bbox(
+                result_df=result_df,
+                output_path=view_output_path,
+                filename="concatenated_sequence",
+                bbox_file=bbox_file
+            )
+        
+        # Clean up temporary files
+        for view in views:
+            for seed_idx in range(len(seed_dirs)):
+                for file_type in ['temp', 'temp_bbox']:
+                    temp_file = os.path.join(output_dir, f"{file_type}_{view}_{seed_idx}_{sequence_key}.csv")
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+
+     
+def process_singleview_directory(
+    original_dir: str,
+    csv_files: List[str],
+    view: str,
+    seed_dirs: List[str],
+    inference_dir: str,
+    output_dir: str,
+    mode: str
+) -> None:
+    """Process a single view directory"""
+    print(f"Processing directory: {original_dir}")
+    
+    # Identify current view from directory name
+    curr_view = next((part for part in original_dir.split("_") if part in [view]), 
+                     original_dir.split("_")[-1])
+    print(f"Identified view: {curr_view}")
+    sequence_output_dir = os.path.join(output_dir, original_dir) # Create output directory matching original structure
+    os.makedirs(sequence_output_dir, exist_ok=True)
+    
+    # Process each CSV file in the directory
+    for csv_file in csv_files:
+        all_pred_files = []
+        curr_dir_name = original_dir.replace(curr_view, view) if curr_view in original_dir else original_dir
+        
+        for seed_dir in seed_dirs:
+            seed_video_dir = os.path.join(seed_dir, inference_dir)
+            seed_sequence_dir = os.path.join(seed_video_dir, curr_dir_name)
+            
+            pred_file = os.path.join(seed_sequence_dir, csv_file)
+            if os.path.exists(seed_sequence_dir) and os.path.exists(pred_file):
+                all_pred_files.append(pred_file)
+        
+        if all_pred_files:
+            # Process ensemble data
+            input_dfs_list, keypoint_names = format_data(
+                input_source=all_pred_files,
+                camera_names=None,
+            )
+            
+            # Get column structure and process based on mode
+            if mode in ['ensemble_mean', 'ensemble_median']:
+                results_df = process_ensemble_frames(all_pred_files, keypoint_names, mode=mode)
+            elif mode == 'eks_singleview':
+                results_df = run_eks_singleview(
+                    markers_list=input_dfs_list,
+                    keypoint_names=keypoint_names
+                )
+            
+            # Save results
+            result_file = os.path.join(sequence_output_dir, csv_file)
+            results_df.to_csv(result_file)
+            print(f"Saved ensemble {mode} predictions to {result_file}")
 
 def process_multiple_video_single_view(
     view: str,
@@ -252,6 +518,117 @@ def process_multiple_video_single_view(
         print(f"Saved ensemble {mode} predictions for {file_name} to {preds_file}")
 
 
+def post_process_ensemble_labels_concat(
+    cfg_lp: DictConfig,
+    results_dir: str,
+    model_type: str,
+    n_labels: int,
+    seed_range: tuple[int, int],
+    views: List[str], 
+    mode: Literal['ensemble_mean', 'ensemble_median', 'eks_singleview', 'eks_multiview'],
+    inference_dirs: List[str],
+    overwrite: bool,
+    pca_object = None, 
+    fa_object = None
+) -> None:
+    """
+    Post-process ensemble labels from directories
+    
+    Args:
+        cfg_lp: Configuration dictionary
+        results_dir: Base directory for results
+        model_type: Type of model
+        n_labels: Number of labels
+        seed_range: Range of seeds (start, end)
+        views: List of view names
+        mode: Processing mode
+        inference_dirs: List of inference directories
+        overwrite: Whether to overwrite existing files
+        pca_object: PCA object (optional)
+        fa_object: FA object (optional)
+    """
+    # Load models if needed
+    pca_object, fa_object = _load_latent_models(pca_object, fa_object)
+    print(f"Using PCA object: {pca_object}")
+    print(f"Using FA object: {fa_object}")
+
+    # Setup directories
+    base_dir = os.path.dirname(results_dir)
+    ensemble_dir, seed_dirs, _ = setup_ensemble_dirs(
+        base_dir, model_type, n_labels, seed_range, mode, ""
+    )
+    
+    for inference_dir in inference_dirs:
+        print(f"Post-processing ensemble predictions for {model_type} {n_labels} {seed_range[0]}-{seed_range[1]} for {inference_dir}")
+        first_seed_dir = seed_dirs[0]
+        inf_dir_in_first_seed = os.path.join(first_seed_dir, inference_dir)
+        
+        # Check if the inference_dir inside the first_seed_dir has subdirectories
+        entries = os.listdir(inf_dir_in_first_seed)
+        has_subdirectories = any(os.path.isdir(os.path.join(inf_dir_in_first_seed, entry)) for entry in entries)
+        
+        if not has_subdirectories:
+            print(f"No subdirectories found in {inf_dir_in_first_seed}. Skipping.")
+            continue
+            
+        print(f"Subdirectories found in {inf_dir_in_first_seed}. Processing {inference_dir}...")
+        output_dir = os.path.join(ensemble_dir, mode, inference_dir)
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Process using the new concatenation approach
+        if mode == 'eks_multiview':
+            # Use the new concatenation-based processing
+            process_multiview_directories_concat(
+                views=views,
+                seed_dirs=seed_dirs,
+                inference_dir=inference_dir,
+                output_dir=output_dir,
+                mode=mode,
+                pca_object=pca_object,
+                fa_object=fa_object,
+                get_bbox_path_fn= lambda p: _get_bbox_path_fn(p, Path(results_dir), Path(cfg_lp.data.data_dir)) #None  # Update this if bbox handling is needed
+            )
+            
+            # Process final predictions for all views using the concat approach
+            for view in views:
+                process_final_predictions(
+                    view=view,
+                    output_dir=output_dir,
+                    seed_dirs=seed_dirs,
+                    inference_dir=inference_dir,
+                    cfg_lp=cfg_lp,
+                    use_concatenated=True
+                )
+        else:
+            original_structure = get_original_structure(first_seed_dir, inference_dir, views)
+            print(f"Mode {mode} does not use the concatenation approach. Using original implementation.")
+            # Process each view separately for other modes
+            for view in views:
+                print(f"\nProcessing view: {view}")
+                
+                view_dirs = {
+                    dir_name: files 
+                    for dir_name, files in original_structure.items()
+                    if view in dir_name
+                }
+                
+                # Process each view-specific directory
+                for original_dir, csv_files in view_dirs.items():
+                    process_singleview_directory(
+                        original_dir, csv_files, view, 
+                        seed_dirs, inference_dir, output_dir, mode
+                    )
+                
+                # Process final predictions for this view
+                process_final_predictions(
+                    view=view,
+                    output_dir=output_dir,
+                    seed_dirs=seed_dirs,
+                    inference_dir=inference_dir,
+                    cfg_lp=cfg_lp,
+                    use_concatenated=False
+                )
+
 def post_process_ensemble_videos(
     cfg_lp: DictConfig,
     results_dir: str,
@@ -262,37 +639,8 @@ def post_process_ensemble_videos(
     mode: Literal['ensemble_mean', 'ensemble_median', 'eks_singleview', 'eks_multiview'],
     inference_dirs: List[str],
     overwrite: bool,
-    n_latent: int = 3,
-    # n_latent: int | None = None,
-    pca_object = None,
-    fa_object = None
 ) -> None:
     """Post-process ensemble videos"""
-    print(f"n_latent is: {n_latent} ")
-    # Load models if needed
-    pca_object, fa_object = _load_latent_models_from_config(cfg_lp, pca_object, fa_object)
-    print(f"Using PCA object: {pca_object}")
-    print(f"Using FA object: {fa_object}")
-
-    # Prepare FA parameters for inflation if FA object is available
-    inflate_vars_kwargs = {}
-    if fa_object is not None:
-        # Extract loading matrix and mean from the FA object
-        print("Extracting FA parameters for variance inflation")
-        try:
-            loading_matrix = fa_object.components_.T  # Typically the loading matrix is the transpose of components_
-            mean = fa_object.mean_
-            
-            inflate_vars_kwargs = {
-                'loading_matrix': loading_matrix,
-                # 'mean': mean,
-                'mean': np.zeros_like(mean)  # we had an issue of centering twice 
-                
-            }
-            print("Successfully extracted FA parameters for variance inflation")
-        except AttributeError as e:
-            print(f"Error extracting FA parameters: {e}. Using default inflation parameters.")
-
     # Setup directories
     base_dir = os.path.dirname(results_dir)
     ensemble_dir, seed_dirs, _ = setup_ensemble_dirs(
@@ -319,44 +667,36 @@ def post_process_ensemble_videos(
 
         if mode == 'eks_multiview':
             # Get the files in the inference directory partitioned by view.
-            files_by_view = io.collect_files_by_token(list(map(Path, entries)), views)
+            files_by_view = collect_files_by_token(list(map(Path, entries)), views)
             # Get the files in the inference directory FOR JUST ONE VIEW.
             # There should be one file per session. These we call "first view sessions".
             first_view_sessions = list(map(str, files_by_view[views[0]]))
             for first_view_session in first_view_sessions:
                 # Process multiview case for videos
                 all_pred_files = []
-
-                # Collect files for all views and seeds
-                for view in views:
+                for view in views: # collect files for all seeds and views
                     print(f"Processing view: {view}")
                     # Get the filename of the prediction file for this session-view pair.
                     session = first_view_session.replace(views[0], view)
-
                     for seed_dir in seed_dirs:
                         all_pred_files.append(os.path.join(seed_dir, inference_dir, session))
 
                 # Not None when there's bbox files in the dataset, i.e. chickadee-crop.
-                all_pred_files_uncropped = prepare_uncropped_csv_files(all_pred_files, lambda p: _get_bbox_path_fn(p, Path(results_dir), Path(cfg_lp.data.data_dir)))
-                print(f"all_pred_files_uncropped is {all_pred_files_uncropped}")
-                
+                all_pred_files_uncropped = prepare_uncropped_csv_files(
+                    all_pred_files, 
+                    lambda p: _get_bbox_path_fn(p, Path(results_dir), Path(cfg_lp.data.data_dir))
+                )
+
+                # Format data and run multiview EKS
                 input_dfs_list, keypoint_names = format_data(
                     input_source=all_pred_files_uncropped or all_pred_files,
                     camera_names=views,
                 )
- 
-                print(f" input dfs list: {input_dfs_list}")
 
-                # Run multiview EKS
-                # n_latent = n_latent if n_latent is not None else 3
                 results_dfs = run_eks_multiview(
                     markers_list=input_dfs_list,
                     keypoint_names=keypoint_names,
                     views=views,
-                    quantile_keep_pca = 50, # in general 50
-                    inflate_vars_kwargs=inflate_vars_kwargs,
-                    n_latent=n_latent,
-                    pca_object=pca_object,
                 )
 
                 # Save results for each view
@@ -364,18 +704,24 @@ def post_process_ensemble_videos(
                     session = first_view_session.replace(views[0], view)
                     result_df = results_dfs[view]
                     result_file = Path(output_dir) / session
+
                     # If cropped dataset, save to a _uncropped file, so that we can later undo the remapping.
                     if all_pred_files_uncropped is not None:
                         uncropped_result_file = result_file.with_stem(result_file.stem + "_uncropped")
-                    else:
-                        uncropped_result_file = None
-
-                    result_df.to_csv(uncropped_result_file or result_file)
-
-                    # Crop the multiview-eks output back to original cropped coordinate space.
-                    if all_pred_files_uncropped is not None:
+                        result_df.to_csv(uncropped_result_file)
+                        
+                        # Crop back to original coordinate space
                         bbox_path = _get_bbox_path_fn(result_file, Path(results_dir), Path(cfg_lp.data.data_dir))
-                        generate_cropped_csv_file(uncropped_result_file, bbox_path, result_file, img_height = 320, img_width = 320, mode="subtract")
+                        generate_cropped_csv_file(
+                            uncropped_result_file, 
+                            bbox_path, 
+                            result_file, 
+                            img_height=320, 
+                            img_width=320, 
+                            mode="subtract"
+                        )
+                    else:
+                        result_df.to_csv(result_file)
 
                     print(f"Saved ensemble {mode} predictions for {view} view to {result_file}")
         else:
@@ -388,276 +734,6 @@ def post_process_ensemble_videos(
                     output_dir=output_dir,
                     mode=mode
                 )
-
-
-def load_collected_data(
-    cfg_lp: DictConfig,
-    view: str
-) -> Optional[pd.DataFrame]:
-    """Load and process CollectedData file for a specific view."""
-    collected_data_path = os.path.join(cfg_lp.data.data_dir, f"CollectedData_{view}_new.csv")
-    if not os.path.exists(collected_data_path):
-        print(f"Warning: CollectedData file not found for {view}")
-        return None
-    else: 
-        df = pd.read_csv(collected_data_path, header=[0, 1, 2], index_col=0)
-        df = io_utils.fix_empty_first_row(df)
-        print(f"Loaded CollectedData file with shape: {df.shape}")
-        return df
-
-def get_valid_indices(collected_df: pd.DataFrame) -> List[str]:
-    """Extract valid image indices from collected data."""
-    return [
-        idx for idx in collected_df.index 
-        if idx not in ['bodyparts', 'coords'] 
-        and isinstance(idx, str) 
-        and '/' in idx
-    ]
-
-def group_indices_by_sequence(indices: List[str]) -> Dict[str, List[str]]:
-    """Group indices by sequence name."""
-    sequences = defaultdict(list)
-    for idx in indices:
-        parts = idx.split('/')
-        if len(parts) >= 2:
-            sequences[parts[1]].append(idx)
-    return dict(sequences)
-
-def find_prediction_files(
-    path_videos_new: str,
-    view: str
-) -> List[str]:
-    """Find prediction files for a specific view."""
-    pattern = rf"(?<![A-Z]){re.escape(view)}(?![A-Z])"
-    return [
-        os.path.join(path_videos_new, filename)
-        for filename in os.listdir(path_videos_new)
-        if os.path.isfile(os.path.join(path_videos_new, filename))
-        and re.search(pattern, filename)
-        and 'pixel_error' not in filename
-    ]
-
-def extract_frame_numbers(indices: List[str]) -> Dict[str, int]:
-    """Extract frame numbers from image paths."""
-    img_to_frame_num = {}
-    for idx in indices:
-        parts = idx.split('/')
-        if len(parts) >= 3:
-            frame_file = parts[2]
-            frame_match = re.search(r'img(\d+)\.png', frame_file)
-            if frame_match:
-                img_to_frame_num[idx] = int(frame_match.group(1))
-    return img_to_frame_num
-
-
-
-def process_numeric_indices(
-    pred_df: pd.DataFrame,
-    img_to_frame_num: Dict[str, int],
-    combined_df: pd.DataFrame
-) -> pd.DataFrame:
-    """Process prediction file with numeric indices."""
-    sample_frames = list(img_to_frame_num.values())[:5]
-    frame_exists = [frame in pred_df.index for frame in sample_frames]
-
-    if any(frame_exists):
-        match_count = 0
-        for img_path, frame_num in img_to_frame_num.items():
-            if frame_num in pred_df.index:
-                combined_df.loc[img_path] = pred_df.loc[frame_num]
-                match_count += 1
-        print(f"Matched {match_count} frames by direct frame number")
-    else:
-        sorted_pred_indices = sorted(pred_df.index)
-        sorted_img_paths = sorted(img_to_frame_num.keys(), key=lambda x: img_to_frame_num[x])
-        min_length = min(len(sorted_pred_indices), len(sorted_img_paths))
-        
-        for i in range(min_length):
-            img_path = sorted_img_paths[i]
-            pred_idx = sorted_pred_indices[i]
-            combined_df.loc[img_path] = pred_df.loc[pred_idx]
-        print(f"Mapped {min_length} frames by position")
-    
-    return combined_df
-
-def process_string_indices(
-    pred_df: pd.DataFrame,
-    img_to_frame_num: Dict[str, int],
-    combined_df: pd.DataFrame,
-    sequence: str
-) -> pd.DataFrame:
-    """Process prediction file with string indices."""
-    seq_indices = [idx for idx in pred_df.index if isinstance(idx, str) and sequence in idx]
-    if seq_indices:
-        match_count = 0
-        for img_path, frame_num in img_to_frame_num.items():
-            for pred_idx in seq_indices:
-                pred_frame_match = re.search(r'img(\d+)\.png', pred_idx)
-                if pred_frame_match and int(pred_frame_match.group(1)) == frame_num:
-                    combined_df.loc[img_path] = pred_df.loc[pred_idx]
-                    match_count += 1
-                    break
-        print(f"Matched {match_count} frames by frame number in path")
-    else:
-        print("Warning: Could not determine how to map indices for this file")
-    return combined_df
-
-def process_prediction_file(
-    pred_file: str,
-    collected_df: pd.DataFrame,
-    img_to_frame_num: Dict[str, int],
-    combined_df: Optional[pd.DataFrame]
-) -> Optional[pd.DataFrame]:
-    """Process a single prediction file and update combined DataFrame."""
-    try:
-        pred_df = pd.read_csv(pred_file, header=[0, 1, 2], index_col=0)
-        pred_df = io_utils.fix_empty_first_row(pred_df)
-        print(f"Loaded prediction file with shape: {pred_df.shape}")
-
-        if combined_df is None:
-            combined_df = pd.DataFrame(index=collected_df.index, columns=pred_df.columns)
-            print(f"Initialized combined DataFrame with shape: {combined_df.shape}")
-
-        if pred_df.index.dtype == 'int64' or all(isinstance(x, int) for x in pred_df.index if isinstance(x, (int, float))):
-            return process_numeric_indices(pred_df, img_to_frame_num, combined_df)
-        else:
-            return process_string_indices(pred_df, img_to_frame_num, combined_df)
-
-    except Exception as e:
-        print(f"Error processing prediction file {pred_file}: {e}")
-        print(traceback.format_exc())
-        return combined_df
-
-def save_and_evaluate_results(
-    combined_df: pd.DataFrame,
-    output_dir: str,
-    view: str,
-    cfg_lp: DictConfig
-) -> None:
-    """Save combined predictions and compute metrics."""
-    if combined_df is None:
-        print(f"Warning: No data was combined for {view}")
-        return
-
-    combined_df.loc[:, ("set", "", "")] = "train"
-    non_empty_count = combined_df.dropna(how='all').shape[0]
-    print(f"\nSuccessfully filled {non_empty_count} out of {combined_df.shape[0]} rows")
-
-    output_file = os.path.join(output_dir, f"predictions_{view}_new.csv")
-    combined_df.to_csv(output_file)
-    print(f"Saved predictions to {output_file}")
-
-    cfg_lp_view = cfg_lp.copy()
-    cfg_lp_view.data.csv_file = [f'CollectedData_{view}_new.csv']
-    cfg_lp_view.data.view_names = [view]
-
-    try:
-        compute_metrics(cfg=cfg_lp_view, preds_file=[output_file], data_module=None)
-        print(f"Successfully computed metrics for {view}")
-    except Exception as e:
-        print(f"Error computing metrics for {view}: {str(e)}")
-        print(traceback.format_exc())
-
-def extract_labeled_frame_predictions(
-    cfg_lp: DictConfig,
-    results_dir: str,
-    model_type: str,
-    n_labels: int,
-    seed_range: tuple[int, int],
-    views: List[str],
-    mode: str,
-    inference_dir: str = "videos_new",
-    overwrite: bool = False
-) -> None:
-    """
-    Extract predictions specifically for labeled frames from a method's output.
-    
-    Args:
-        cfg_lp: Lightning Pose configuration
-        results_dir: Results directory path
-        model_type: Model type (e.g., 'supervised')
-        n_labels: Number of labels used for training
-        seed_range: Range of seeds used (e.g., (0, 4))
-        views: List of camera view names
-        mode: Processing method ('ensemble_mean', 'ensemble_median', 'eks_singleview', 'eks_multiview')
-        inference_dir: Name of the directory containing video predictions (default: "videos_new")
-        overwrite: Whether to overwrite existing files
-    """
-
-    # Setup paths
-    base_dir = os.path.dirname(results_dir)
-    ensemble_dir, seed_dirs, _ = setup_ensemble_dirs(
-        base_dir, model_type, n_labels, seed_range, mode, ""
-    )
-    method_dir = os.path.join(ensemble_dir, mode)
-    
-    # Use the specified inference_dir, but if it's "videos_new" and "videos-full_new" exists, prefer that
-    specified_inference_path = os.path.join(method_dir, inference_dir)
-    videos_full_new_path = os.path.join(method_dir, "videos-full_new")
-    
-    if inference_dir == "videos_new" and os.path.exists(videos_full_new_path):
-        path_videos_new = videos_full_new_path
-        print(f"Using videos-full_new directory instead of videos_new: {path_videos_new}")
-    else:
-        path_videos_new = specified_inference_path
-        print(f"Using specified inference directory: {path_videos_new}")
-    
-    # Create output directory for labeled frame predictions
-    output_dir = os.path.join(method_dir, "videos-for-each-labeled-frame")
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Check if predictions already exist and should not be overwritten
-    if not overwrite:
-        for view in views:
-            output_file = os.path.join(output_dir, f"predictions_{view}_new.csv")
-            if os.path.exists(output_file):
-                print(f"Predictions file {output_file} already exists. Skipping (overwrite=False).")
-                return
-    
-    print(f"Processing predictions from {path_videos_new}")
-    print(f"Saving results to {output_dir}")
-    
-     # Process each view
-    for view in views:
-        print(f"\nProcessing {view}...")
-        
-        # Load collected data
-        collected_df = load_collected_data(cfg_lp, view)
-        if collected_df is None:
-            continue
-
-        # Get valid indices and sequences
-        valid_indices = get_valid_indices(collected_df)
-        sequences = group_indices_by_sequence(valid_indices)
-        prediction_files = find_prediction_files(path_videos_new, view)
-        print(f"Found {len(prediction_files)} prediction files for {view}")
-
-        # Initialize combined DataFrame
-        combined_df = None
-
-        # Process each sequence
-        for sequence, indices in sequences.items():
-            print(f"\nProcessing sequence: {sequence}")
-            
-            sequence_pred_files = [f for f in prediction_files if sequence in os.path.basename(f)]
-            print(f"Found {len(sequence_pred_files)} prediction files for sequence {sequence}")
-
-            if not sequence_pred_files:
-                print(f"No prediction files found for sequence {sequence}")
-                continue
-
-            img_to_frame_num = extract_frame_numbers(indices)
-            
-            for pred_file in sequence_pred_files:
-                print(f"Processing file: {os.path.basename(pred_file)}")
-                combined_df = process_prediction_file(pred_file, collected_df, img_to_frame_num, combined_df)
-
-        # Save and evaluate results
-        save_and_evaluate_results(combined_df, output_dir, view, cfg_lp)
-
-    print("\nAll views processed!")
-
-
 
 def run_eks_singleview(
     markers_list: List[pd.DataFrame],
@@ -680,7 +756,6 @@ def run_eks_singleview(
         pd.DataFrame: A DataFrame with the full smoothed data, including detailed
         statistics for all keypoints and their dimensions.
     """
-
     print(f'Input data loaded for keypoints: {keypoint_names}')
     print(f'Number of ensemble members: {len(markers_list)}')
 
@@ -699,7 +774,6 @@ def run_eks_singleview(
     
     return results_df
 
-
 def run_eks_multiview(
     markers_list: List[List[pd.DataFrame]],
     keypoint_names: List[str],
@@ -714,7 +788,7 @@ def run_eks_multiview(
     # inflate_vars_v_quantile_thresh = None,
     inflate_vars_kwargs: dict = {},
     verbose: bool = False,
-    n_latent: int =3,
+    n_latent: int = 3, # also add this to the other function and sending in this integer instead of pulling from the config only one things 
     pca_object = None,
 ) -> dict[str, pd.DataFrame]:
 
@@ -744,22 +818,19 @@ def run_eks_multiview(
     print(f'Input data loaded for keypoints for multiview data: {keypoint_names}')
 
     marker_array = input_dfs_to_markerArray(markers_list, keypoint_names, camera_names=views)
-    # Uncomment this to skip eks for testing purposes:
-    #return {view: markers_list[i][0] for i, view in enumerate(views)}
-
     # run the ensemble kalman smoother for multiview data
     camera_dfs, smooth_params_final = ensemble_kalman_smoother_multicam(
         marker_array = marker_array,
         keypoint_names = keypoint_names,
-        smooth_param = 10000,#None,
-        quantile_keep_pca= quantile_keep_pca, 
+        smooth_param = None,
+        quantile_keep_pca= quantile_keep_pca,
         camera_names = views,
-        s_frames = [(None,None)], # Keemin wil fix 
+        s_frames = [(None,None)], 
         avg_mode = avg_mode,
         var_mode = var_mode,
-        inflate_vars = False,
+        inflate_vars = True,
         inflate_vars_kwargs = inflate_vars_kwargs,
-        n_latent = n_latent,
+        n_latent =6, # try to set it equal to n_latents, and make this n_latents as an integer rather 
         verbose = verbose,
         pca_object = pca_object,
     )
@@ -793,4 +864,5 @@ def run_eks_multiview(
         print(f'Successfully processed view {view}')
     
     return results_dfs
+
 

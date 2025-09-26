@@ -164,29 +164,29 @@ dataset_info = {
             's4-d1',
         ],
         'cam_names': ['camera1', 'camera2', 'camera3', 'camera4', 'camera5', 'camera6'],
-        'keypoints': [
+        'keypoints_raw': [
             'HeadF', 'HeadB', 'HeadL',
             'SpineF', 'SpineM', 'SpineL',
             'Offset1', 'Offset2',
             'HipL', 'HipR',
             'ElbowL', 'ArmL', 'ShoulderL', 'ShoulderR', 'ElbowR', 'ArmR', 'KneeR', 'KneeL', 'ShinL', 'ShinR',
         ],
-        'skeleton': np.array([
+        'skeleton_raw': np.array([
             # head
             [ 0,  1],
             [ 1,  2],
-            [ 1,  0],
+            [ 2,  0],
             [ 0,  3],
             [ 1,  3],
             [ 2,  3],
             # torso
             [ 3,  4],
             [ 4,  5],
-            [ 3,  6],
-            [ 4,  6],
-            [ 4,  7],
-            [ 5,  7],
-            [ 6,  7],
+            # [ 3,  6],
+            # [ 4,  6],
+            # [ 4,  7],
+            # [ 5,  7],
+            # [ 6,  7],
             # l arm
             [ 3, 12],
             [12, 10],
@@ -204,7 +204,7 @@ dataset_info = {
             [ 9, 16],
             [16, 19],
         ]),
-        'skeleton_colors': [
+        'skeleton_colors_raw': [
             # head
             'blue',
             'blue',
@@ -215,11 +215,60 @@ dataset_info = {
             # torso
             'darkred',
             'darkred',
+            # 'darkred',
+            # 'darkred',
+            # 'darkred',
+            # 'darkred',
+            # 'pink',
+            # l arm
+            'yellow',
+            'yellow',
+            'yellow',
+            # r arm
+            'limegreen',
+            'limegreen',
+            'limegreen',
+            # l leg
+            'dodgerblue',
+            'dodgerblue',
+            'dodgerblue',
+            # r leg
+            'darkblue',
+            'darkblue',
+            'darkblue',
+        ],
+        'keypoints': [
+            # 'HeadF', 'HeadB', 'HeadL',
+            'SpineF', 'SpineM', 'SpineL',
+            # 'Offset1', 'Offset2',
+            'HipL', 'HipR',
+            'ElbowL', 'ArmL', 'ShoulderL', 'ShoulderR', 'ElbowR', 'ArmR', 'KneeR', 'KneeL', 'ShinL', 'ShinR',
+        ],
+        'skeleton': np.array([
+            # torso
+            [ 0,  1],
+            [ 1,  2],
+            # l arm
+            [ 0,  7],
+            [ 7,  5],
+            [ 5,  6],
+            # r arm
+            [ 0,  8],
+            [ 8,  9],
+            [ 9, 10],
+            # l leg
+            [ 2,  3],
+            [ 3, 12],
+            [12, 13],
+            # r leg
+            [ 2,  4],
+            [ 4, 11],
+            [11, 14],
+        ]),
+        'skeleton_colors': [
+            # torso
             'darkred',
             'darkred',
-            'darkred',
-            'darkred',
-            'pink',
             # l arm
             'yellow',
             'yellow',

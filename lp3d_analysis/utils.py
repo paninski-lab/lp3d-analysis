@@ -129,7 +129,6 @@ def extract_ood_frame_predictions(
         original_df = io_utils.fix_empty_first_row(original_df) 
         original_index = original_df.index  
         
-
         # Debug the first frame in the index
         print(f"Original index has {len(original_index)} entries")
         if len(original_index) > 0:
@@ -145,6 +144,8 @@ def extract_ood_frame_predictions(
             continue
         
         results_list = []
+        missing_snippets = 0
+        even_frame_snippets = 0
         #file_path = os.path.join(data_dir, csv_file)
         #df = pd.read_csv(file_path, header=[0,1,2], index_col=0)
         
@@ -158,11 +159,13 @@ def extract_ood_frame_predictions(
             snippet_file = os.path.join(results_dir, video_dir , snippet_path.replace('mp4', 'csv'))
             if os.path.exists(snippet_file):
                 snippet_df = pd.read_csv(snippet_file, header=[0,1,2], index_col=0)
+                snippet_df = io_utils.fix_empty_first_row(snippet_df)
 
                 # extract center frame 
                 frame_count = snippet_df.shape[0]
                 if frame_count % 2 == 0:
                     print(f"Warning: Snippet {snippet_file} has even number of frames: {frame_count}")
+                    even_frame_snippets += 1
                     continue
                 idx_frame = int(np.floor(frame_count / 2))
                 # assert snippet_df.shape[0] % 2 != 0 # ensure odd number of frames
@@ -172,6 +175,8 @@ def extract_ood_frame_predictions(
                 # result = snippet_df[snippet_df.index == idx_frame].rename(index={idx_frame: img_path})
                 result = snippet_df.iloc[[idx_frame]].rename(index={idx_frame: img_path})
                 results_list.append(result)
+            else:
+                missing_snippets += 1
 
         # combine all results 
         if results_list:
@@ -420,6 +425,22 @@ def process_final_predictions(
 # Functions for dealing with crop and Zoom datasets 
 # -----------------------------------------------------------------------------
 
+def _get_bbox_path_fn(p: Path, results_dir: Path, data_dir: Path) -> Path:
+    """Given some preds file `p` and `results_dir`, it will return p's
+    corresponding bbox path in the data directory."""
+    # Gets the current depth in the model directory.
+    n_levels_up = len(p.parent.parts) - len(results_dir.parts)
+    # Hack: correct the logic for when transforming results of eks_multiview back to cropped space.
+    if "eks_multiview" in p.parts:
+        n_levels_up -= 1
+    # Get `p` relative to model_dir
+    model_dir = p.parents[n_levels_up]
+    relative_p = Path(p).relative_to(model_dir)
+    p_in_data_dir = data_dir / relative_p
+    bbox_path = p_in_data_dir.with_stem(p.stem + "_bbox")
+    return bbox_path
+
+
 def generate_cropped_csv_file(
     input_csv_file: str | Path,
     input_bbox_file: str | Path,
@@ -464,26 +485,6 @@ def generate_cropped_csv_file(
                 vals = vals + bbox_data[coord_type]
             
             csv_data[col] = vals
-    # for col in csv_data.columns:
-    #     if col[-1] in ("x", "y"):
-    #         vals = csv_data[col]
-            
-    #         if mode == "add":
-    #             if col[-1] == "x" and img_width:
-    #                 vals = (vals / img_width) * bbox_data["w"]
-    #             elif col[-1] == "y" and img_height:
-    #                 vals = (vals / img_height) * bbox_data["h"]
-                
-    #         if mode == "subtract":
-    #             csv_data[col] = vals - bbox_data[col[-1]]
-    #         else:
-    #             csv_data[col] = vals + bbox_data[col[-1]]
-
-    #         if mode == "subtract":
-    #             if col[-1] == "x" and img_width:
-    #                 csv_data[col] = (csv_data[col] / bbox_data["w"]) * img_width 
-    #             elif col[-1] == "y" and img_height:
-    #                 csv_data[col] = (csv_data[col] / bbox_data["h"]) * img_height
 
     output_csv_file = Path(output_csv_file)
     output_csv_file.parent.mkdir(parents=True, exist_ok=True)
@@ -509,9 +510,129 @@ def prepare_uncropped_csv_files(csv_files: list[str], get_bbox_path_fn: Callable
         # If there's a bbox_file, remap to original space by adding bbox df to preds df.
         # Save as _uncropped.csv version of preds_file.
         remapped_p = p.with_stem(p.stem + "_uncropped")
+        print(f"remapped_p is {remapped_p}")
         csv_files_uncropped.append(str(remapped_p))
         generate_cropped_csv_file(p, bbox_path, remapped_p, img_height = 320, img_width = 320, mode="add")
 
     return csv_files_uncropped
 
 
+def extract_session_info(filename: str, view_names: list[str]) -> tuple[str, str]:
+    """Extract session name and view from filename."""
+    name = filename.replace('.csv', '')
+    view_name = next((view for view in view_names if view in name), name.split('_')[-1])
+    session_name = name.replace(f'_{view_name}', '')
+    return session_name, view_name
+
+
+def parse_labeled_frames(image_paths: list[str], view_names: list[str]) -> dict[str, set[int]]:
+    """Parse session names and frame numbers from image paths."""
+    import re
+    labeled_frames = {}
+    
+    for img_path in image_paths:
+        try:
+            parts = img_path.split('/')
+            if len(parts) < 2:
+                continue
+                
+            session_dir, img_filename = parts[-2], parts[-1]
+            
+            # Extract frame number
+            frame_match = re.search(r'img(\d+)\.png', img_filename)
+            if not frame_match:
+                continue
+                
+            frame_number = int(frame_match.group(1))
+            session_name = session_dir
+            for view in view_names:
+                session_name = session_name.replace(f'_{view}', '')
+            
+            labeled_frames.setdefault(session_name, set()).add(frame_number)
+        except Exception as e:
+            print(f"Could not parse {img_path}: {e}")
+            
+    return labeled_frames
+
+
+def extract_sequence_name(session_name: str, view_names: list[str]) -> str:
+    """Extract sequence name by removing view identifiers and .short suffix."""
+    parts = session_name.split('_')
+    # Remove view identifiers from the session name
+    sequence_parts = [p for p in parts if p not in view_names]
+    result = '_'.join(sequence_parts)
+    # Remove .short suffix if present
+    result = result.replace('.short', '')
+    return result
+
+
+def parse_session_name(session_name: str, view_names: list[str]) -> tuple[str, str]:
+    """Parse session name into base session and condition."""
+    # First extract the sequence name by removing view identifiers
+    sequence_name = extract_sequence_name(session_name, view_names)
+    
+    # Now check for conditions in the sequence name
+    parts = sequence_name.split('_')
+    condition_start = next((i for i, part in enumerate(parts) 
+                          if any(pattern in part for pattern in ['str-', 'rot-', 'sec'])), 
+                         len(parts))
+    
+    if condition_start < len(parts):
+        return '_'.join(parts[:condition_start]), '_'.join(parts[condition_start:])
+    return sequence_name, ""
+
+
+def remap_keypoints_to_original_space(keypoints_2d: np.ndarray, bbox_data: dict,
+                                     img_height: int = 320, img_width: int = 320) -> np.ndarray:
+    """Remap keypoints from cropped space back to original space."""
+    if bbox_data is None:
+        print("No bbox data provided for remapping")
+        return keypoints_2d
+    
+    # Validate required bbox keys
+    required_keys = ['x', 'y', 'w', 'h']
+    missing_keys = [key for key in required_keys if key not in bbox_data or bbox_data[key] is None]
+    
+    if missing_keys:
+        print(f"Missing bbox keys {missing_keys}. Cannot remap keypoints.")
+        return keypoints_2d
+    
+    # Check for valid bbox dimensions
+    if bbox_data['w'] <= 0 or bbox_data['h'] <= 0:
+        print(f"Invalid bbox dimensions: w={bbox_data['w']}, h={bbox_data['h']}")
+        return keypoints_2d
+    
+    # Check for NaN/inf values
+    bbox_values = [bbox_data[key] for key in required_keys]
+    if any(np.isnan(val) or np.isinf(val) for val in bbox_values):
+        print("Bbox contains NaN or inf values. Cannot remap keypoints.")
+        return keypoints_2d
+    
+    # This is the inverse of the cropping operation
+    # From cropped space (img_width x img_height) back to original space
+    remapped_keypoints = keypoints_2d.copy()
+    
+    # Scale back to original dimensions
+    remapped_keypoints[:, 0] = (remapped_keypoints[:, 0] / img_width) * bbox_data['w']
+    remapped_keypoints[:, 1] = (remapped_keypoints[:, 1] / img_height) * bbox_data['h']
+    
+    # Add back the bbox offset
+    remapped_keypoints[:, 0] += bbox_data['x']
+    remapped_keypoints[:, 1] += bbox_data['y']
+    
+    return remapped_keypoints
+
+
+def create_image_path(session_name: str, view_name: str, frame_number: int, view_names: list[str]) -> str:
+    """Create image path for a frame."""
+    clean_session_name = session_name.replace('.short', '')
+    parts = clean_session_name.split('_')
+    condition_start = next((i for i, p in enumerate(parts) 
+                          if any(x in p for x in ['str-', 'rot-', 'sec'])), len(parts))
+    
+    if condition_start < len(parts):
+        base_session = '_'.join(parts[:condition_start])
+        condition = '_'.join(parts[condition_start:])
+        return f"labeled-data/{base_session}_{view_name}_{condition}/img{frame_number:08d}.png"
+    else:
+        return f"labeled-data/{clean_session_name}_{view_name}/img{frame_number:08d}.png"

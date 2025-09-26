@@ -1,0 +1,58 @@
+# Distillation Pipeline Configuration Example
+# This configuration file shows how to set up the distillation pipeline
+
+# outputs_dir: "/teamspace/studios/this_studio/outputs"
+# dataset_name: "chickadee-crop"
+dataset_name: "mirror-mouse-separate"
+# dataset_name: "fly-anipose"
+
+# Lightning-pose config path (required by load_cfgs)
+lightning_pose_config: "/teamspace/studios/this_studio/lp3d-analysis/configs/config_${dataset_name}.yaml"
+# Base paths (will be used to auto-construct paths based on dataset_name)
+base_data_dir: "/teamspace/studios/data"
+pseudo_labeled_base_dir: "/teamspace/studios/this_studio/pseudo_labeled_dataset_debugsep26_3"
+
+# Number of train frames to use (for interpolation in paths)
+train_frames: 200
+
+# Distillation pipeline configuration
+distillation:
+  # Enable/disable the distillation pipeline
+  run: true
+  
+  # Input paths (will be auto-constructed based on dataset_name)
+  # eks_results_dir: "/teamspace/studios/this_studio/outputs/${dataset_name}/test_200_MVT_3d_loss_patch_masking/mvt_3d_loss_${train_frames}_0-2/eks_multiview_varinf/videos"  # Will be auto-constructed from eks_model_info
+  # eks_results_dir: "/teamspace/studios/this_studio/outputs/${dataset_name}/test_200_MVT_3d_loss_patch_masking/mvt_3d_loss_${train_frames}_0-2/eks_multiview_varinf/videos"  # Will be auto-constructed from eks_model_info
+  # eks_results_dir: "/teamspace/studios/this_studio/outputs/${dataset_name}/test_200_MVT_3d_loss_patch_masking/mvt_3d_loss_${train_frames}_0-2/eks_multiview/videos"  # Will be auto-constructed from eks_model_info
+  # eks_results_dir: "/teamspace/studios/this_studio/outputs/${dataset_name}/test_200_MVT_3d_loss_patch_masking/mvt_3d_loss_${train_frames}_0-2/non_linear_eks/videos"  
+  # median 
+  # eks_results_dir: "/teamspace/studios/this_studio/outputs/${dataset_name}/test_200_MVT_3d_loss_patch_masking/mvt_3d_loss_${train_frames}_0-2/ensemble_median/videos"  
+  # eks_results_dir: "/teamspace/studios/this_studio/outputs/${dataset_name}/test_200_MVT_3d_loss_patch_masking/mvt_3d_loss_${train_frames}_0-2/non_linear_eks_varinf/videos"  
+  # eks_results_dir: "/teamspace/studios/this_studio/outputs/${dataset_name}/test_200_MVT_3d_loss_patch_masking/mvt_3d_loss_${train_frames}_0-2/non_linear_eks/videos_fix"  
+
+
+  # for mirror-mouse-separate - make sure to change later for videos and use varinf 
+  eks_results_dir: "/teamspace/studios/this_studio/outputs/${dataset_name}/test_200_MVT_patch_masking/multiview_transformer_${train_frames}_0-2/eks_multiview_varinf/videos"  # Will be auto-constructed from eks_model_info
+  # eks_results_dir: "/teamspace/studios/this_studio/outputs/${dataset_name}/test_200_MVT_patch_masking/multiview_transformer_${train_frames}_0-2/ensemble_median/videos"  # Will be auto-constructed from eks_model_info
+  # eks_results_dir: "/teamspace/studios/this_studio/outputs/${dataset_name}/test_200_MVT_3d_loss_patch_masking/mvt_3d_loss_${train_frames}_0-2/eks_singleview/videos"  # Will be auto-constructed from eks_model_info
+  # eks_results_dir: "/teamspace/studios/this_studio/outputs/${dataset_name}/test_200_MVT_3d_loss_patch_masking/mvt_3d_loss_200_0-2/eks_multiview/videos_new"  
+  camera_params_dir: null  # Will be auto-constructed from dataset_name
+  existing_data_dir: null  # Will be auto-constructed from dataset_name
+  video_base_dir: null  # Will be auto-constructed from dataset_name
+  
+  # Pipeline parameters
+  frames_per_video: 20  # Number of frames to select per video after variance filtering
+  n_clusters: 10  # Number of clusters for 3D pose clustering
+  min_frames_per_video: 0  # Minimum frames to select per video
+  use_posterior_variance: true  # Use posterior variance instead of ensemble variance
+
+  # Use random selection instead of variance filtering just to validate the pipeline
+  use_random_selection: false   
+  n_random_frames: 3000
+  # Frame extraction settings
+  extract_frames: true  # Whether to extract video frames
+  video_extensions: [".mp4", ".avi", ".mov"]  # Supported video file extensions
+  
+  # File handling settings
+  copy_existing_data: true  # Copy existing labeled data (_new.csv files) and frames
+  copy_calibrations: true  # Copy calibration files from source to output directory

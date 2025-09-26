@@ -1,74 +1,61 @@
 data:
   # resize dimensions to streamline model creation
   image_resize_dims:
-    height: 256 # if doesn't work well try both on 384
+    height: 256
     width: 256
   # ABSOLUTE path to data directory
-  # data_dir: /tmp/data/fly-anipose
-  # data_dir: /teamspace/studios/this_studio/ZZ_distilation_datasets/pseudo_labeled_dataset_3218
-  # data_dir: /teamspace/studios/this_studio/pseudo_labeled_dataset_3000_fly_non_linear_eks_varinf/fly-anipose
-  data_dir: /teamspace/studios/data/fly-anipose
+  data_dir: /teamspace/studios/data/rat7m-crop
   # ABSOLUTE path to unlabeled videos' directory
-  # video_dir: /tmp/data/fly-anipose/videos
-  video_dir: /teamspace/studios/data/fly-anipose/videos
-  # camera calibration files location
-  # camera_params_file: /teamspace/studios/this_studio/ZZ_distilation_datasets/pseudo_labeled_dataset_3218/calibrations.csv
-  # camera_params_file: /tmp/data/fly-anipose/calibrations.csv
-  camera_params_file: /teamspace/studios/data/fly-anipose/calibrations.csv
-  # camera_params_file: /teamspace/studios/this_studio/pseudo_labeled_dataset_3000_fly_non_linear_eks_varinf/fly-anipose/calibrations.csv
-  # location of labels; for example script, this should be relative to `data_dir`]
+  video_dir: /teamspace/studios/data/rat7m-crop/videos
+  # location of labels; for example script, this should be relative to `data_dir`
+  camera_params_file: /teamspace/studios/data/rat7m-crop/calibrations.csv
+  # camera parameter file location
+
   csv_file:
-    - CollectedData_Cam-A.csv
-    - CollectedData_Cam-B.csv
-    - CollectedData_Cam-C.csv
-    - CollectedData_Cam-D.csv
-    - CollectedData_Cam-E.csv
-    - CollectedData_Cam-F.csv
-  view_names:
-    - Cam-A
-    - Cam-B
-    - Cam-C
-    - Cam-D
-    - Cam-E
-    - Cam-F
+    - CollectedData_camera1.csv
+    - CollectedData_camera2.csv
+    - CollectedData_camera3.csv
+    - CollectedData_camera4.csv
+    - CollectedData_camera5.csv
+    - CollectedData_camera6.csv
   
+  bbox_file:
+    - bboxes_camera1.csv
+    - bboxes_camera2.csv
+    - bboxes_camera3.csv
+    - bboxes_camera4.csv
+    - bboxes_camera5.csv
+    - bboxes_camera6.csv
+
+  view_names:
+    - camera1
+    - camera2
+    - camera3
+    - camera4
+    - camera5
+    - camera6
   
   # downsample heatmaps - 2 | 3
   downsample_factor: 2
   # total number of keypoints
-  num_keypoints: 30
+  num_keypoints: 15
   # keypoint names
   keypoint_names:
-    - L1A
-    - L1B
-    - L1C
-    - L1D
-    - L1E
-    - L2A
-    - L2B
-    - L2C
-    - L2D
-    - L2E
-    - L3A
-    - L3B
-    - L3C
-    - L3D
-    - L3E
-    - R1A
-    - R1B
-    - R1C
-    - R1D
-    - R1E
-    - R2A
-    - R2B
-    - R2C
-    - R2D
-    - R2E
-    - R3A
-    - R3B
-    - R3C
-    - R3D
-    - R3E
+    - SpineF
+    - SpineM
+    - SpineL
+    - HipL
+    - HipR
+    - ElbowL
+    - ArmL
+    - ShoulderL
+    - ShoulderR
+    - ElbowR
+    - ArmR
+    - KneeR
+    - KneeL
+    - ShinL
+    - ShinR
   # for mirrored setups with all keypoints defined in same csv file, define matching
   # columns for different keypoints (assumes x-y-x-y interleaving)
   # each list corresponds to a single view, so in the example below there are 2 views
@@ -76,61 +63,57 @@ data:
   # columns that correspond to keypoints only labeled in a single view are omitted
   # TODO: what if a keypoint is labeled in more than 1 but not all views?
   # this info is only used for the multiview pca loss
-  mirrored_column_matches: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29] # saying use all keypoints 
+  mirrored_column_matches: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
   columns_for_singleview_pca: []
 
   skeleton:
-    - ['L1A', 'L1B']
-    - ['L1B', 'L1C']
-    - ['L1C', 'L1D']
-    - ['L1D', 'L1E']
-    - ['L2A', 'L2B']
-    - ['L2B', 'L2C']
-    - ['L2C', 'L2D']
-    - ['L2D', 'L2E']
-    - ['L3A', 'L3B']
-    - ['L3B', 'L3C']
-    - ['L3C', 'L3D']
-    - ['L3D', 'L3E']
-    - ['R1A', 'R1B']
-    - ['R1B', 'R1C']
-    - ['R1C', 'R1D']
-    - ['R1D', 'R1E']
-    - ['R2A', 'R2B']
-    - ['R2B', 'R2C']
-    - ['R2C', 'R2D']
-    - ['R2D', 'R2E']
-    - ['R3A', 'R3B']
-    - ['R3B', 'R3C']
-    - ['R3C', 'R3D']
-    - ['R3D', 'R3E']
+    - ['SpineF', 'SpineM']
+    - ['SpineM', 'SpineL']
+    - ['SpineF', 'ShoulderL']
+    - ['ShoulderL', 'ElbowL']
+    - ['ElbowL', 'ArmL']
+    - ['SpineF', 'ShoulderR']
+    - ['ShoulderR', 'ElbowR']
+    - ['ElbowR', 'ArmR']
+    - ['SpineL', 'HipL']
+    - ['HipL', 'KneeL']
+    - ['KneeL', 'ShinL']
+    - ['SpineL', 'HipR']
+    - ['HipR', 'KneeR']
+    - ['KneeR', 'ShinR']
+  
+  skeleton_colors:
+    SpineF-SpineM: darkred
+    SpineM-SpineL: darkred
+    SpineF-ShoulderL: yellow
+    ShoulderL-ElbowL: yellow
+    ElbowL-ArmL: yellow
+    SpineF-ShoulderR: limegreen
+    ShoulderR-ElbowR: limegreen
+    ElbowR-ArmR: limegreen
+    SpineL-HipL: dodgerblue
+    HipL-KneeL: dodgerblue
+    KneeL-ShinL: dodgerblue
+    SpineL-HipR: darkblue
+    HipR-KneeR: darkblue
+    KneeR-ShinR: darkblue
+  
 
-# Latent models configuration for post-processing and usage of EKS multiview - Optional 
-# latent_models: 
-#   # PCA model path for EKS multiview
-#   pca_model_path: /teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_fly.pkl  # Set to null if not using PCA model for this dataset
-#   # pca_model_path: null
-#   # FA model path for variance inflation in EKS multiview
-#   fa_model_path: /teamspace/studios/this_studio/ZZ_pca_objects/fa_object_inD_fly.pkl
-#   # fa_model_path: null
 
 training:
   # select from one of several predefined image/video augmentation pipelines
   # default- resizing only
   # dlc- imgaug pipeline implemented in DLC 2.0 package
   # dlc-top-down- dlc augmentations plus vertical and horizontal flips
-  imgaug: dlc # dlc-mv for multiple views 
-  # Control whether to use 3D augmentations for multiview models when camera parameters are present
-  # True: Use dlc-mv (no 2D geometric transforms) when camera params exist
-  # False: Use specified imgaug pipeline regardless of camera params
-  # null/None: Default behavior (use dlc-mv when camera params exist)
+  imgaug: dlc
+
   imagug_3d: True  # This allows you to use regular dlc augmentations even with camera params
   # batch size of labeled data during training
-  train_batch_size: 8 # for the supervised one it is 8 for the ctx 4 
+  train_batch_size: 8
   # batch size of labeled data during validation
-  val_batch_size: 16 # was 16
+  val_batch_size: 48
   # batch size of labeled data during test
-  test_batch_size: 1 #16
+  test_batch_size: 48
   # fraction of labeled data used for training
   train_prob: 0.95
   # fraction of labeled data used for validation (remaining used for test)
@@ -157,8 +140,7 @@ training:
   rng_seed_data_pt: 0
   # rng seed for weight initialization
   rng_seed_model_pt: 0
-  # optimizer: Adam | AdamW.ada
-  # Recommended to use Adam for resnet backbones, and AdamW for ViT backbones.
+  # learning rate scheduler
   optimizer: Adam
   optimizer_params:
     learning_rate: 0.00005 #0.00005 #(1e-3) # was 0.001 # 0.00005
@@ -170,59 +152,71 @@ training:
       milestones: [2000, 3000, 4000] 
       gamma: 0.5
   uniform_heatmaps_for_nan_keypoints: true
-  
-  # curriculum learning configuration for patch masking
-  patch_mask:
-    init_step: 700
-    final_step: 5000
-    init_ratio: 0.0
-    final_ratio: 0.5 # to disable patch masking set to 0.0
 
 model:
   # list of unsupervised losses
-  # "pca_singleview" | "pca_multiview" | "temporal" | "unimodal_mse" | "unimodal_kl" | "supervised_pairwise_projections"
+  # "pca_singleview" | "pca_multiview" | "temporal" | "unimodal_mse" | "unimodal_kl"
   losses_to_use: []
   # backbone network:
   # resnet18 | resnet34 | resnet50 | resnet101 | resnet152 | resnet50_contrastive
   # resnet50_animalpose_apose | resnet50_animal_ap10k
   # resnet50_human_jhmdb | resnet50_human_res_rle | resnet50_human_top_res
   # efficientnet_b0 | efficientnet_b1 | efficientnet_b2
-  backbone: vits_dino # in general use resnet50_animal_ap10k
-  # prediction mode - "heatmap" | "regression" | "heatmap_mhcrnn" | "heatmap_multiview" | "heatmap_multiview_transformer"
-  model_type: heatmap_multiview_transformer #heatmap # this is for the vitb_imagenet
+  backbone: vits_dino
+  # prediction mode - "heatmap" | "regression" | "heatmap_mhcrnn" | "heatmap_multiview_transformer"
+  model_type: heatmap_multiview_transformer
   # head mode - "heatmap_cnn" | "feature_transformer" | "feature_transformer_learnable" | "feature_transformer_learnable_crossview" | "trans_fusion"
-  head: heatmap_cnn #heatmap_cnn # need to comment out for supervised model 
+  head: heatmap_cnn #heatmap_cnn #feature_transformer_learnable_crossview # need to comment out for supervised model 
   # which heatmap loss to use
   # "mse" | "kl" | "js"
   heatmap_loss_type: mse
   # tt expt name
   model_name: test_model
+  
+  # curriculum learning configuration for multiview transformer models
+  curriculum_learning:
+    # Type of masking to apply: "view" | "patch" | "none"
+    masking_type: patch
+    # Total steps for curriculum learning (when masking reaches maximum)
+    curriculum_steps: 5000
+    # Steps to wait after backbone unfreezing before starting patch masking
+    patch_masking_delay: 300
+    # Initial masking ratio (starts at this value)
+    initial_mask_ratio: 0.1
+    # Maximum masking ratio (reaches this value at curriculum_steps)
+    max_mask_ratio: 0.5
 
-# batch sizes for unlabeled data (for unsupervised data during training and prediction on videos)
+# Latent models configuration for post-processing and usage of EKS multiview - Optional 
+latent_models:
+  # PCA model path for EKS Multiview
+  pca_model_path: null  # Set to null if not using PCA model for this dataset
+  # FA model path for variance inflation in EKS multiview
+  fa_model_path: null  # Set to null if not using FA model for this dataset
+
 dali:
   general:
     seed: 123456
   base:
-    train: 
-      sequence_length: 8 # number of consecutive frames 
+    train:
+      sequence_length: 32
     predict:
-      sequence_length: 16 #128 # for videos - number of consecutive frames for inference each video alone 
+      sequence_length: 64 #128
   context:
     train:
       batch_size: 16
     predict:
       sequence_length: 96
-  
+
 losses:
   # loss = projection onto the discarded eigenvectors
   pca_multiview:
     # weight in front of PCA loss
-    log_weight: 6.0 # the weight we want for the pca loss. the smaller it is the higher the weight 
+    log_weight: 5.0
     # predictions whould lie within the low-d subspace spanned by these components
     components_to_keep: 3
     # absolute error (in pixels) below which pca loss is zeroed out; if not null, this
     # parameter takes precedence over `empirical_epsilon_percentile`
-    epsilon: null 
+    epsilon: null
   # loss = projection onto the discarded eigenvectors
   pca_singleview:
     # weight in front of PCA loss
@@ -245,11 +239,10 @@ losses:
   
   supervised_pairwise_projections:
     # weight in front of pairwise projection loss
-    log_weight: 0.3
+    log_weight: 8.0
     # absolute error (in pixels) below which pairwise projection loss is zeroed out; if not null, this
     # parameter takes precedence over `empirical_epsilon_percentile`
     epsilon: null
-
 
 eval:
   # predict? used in scripts/train_hydra.py
@@ -287,3 +280,4 @@ callbacks:
     increase_factor: 0.01
     final_val: 1.0
     freeze_until_epoch: 0
+

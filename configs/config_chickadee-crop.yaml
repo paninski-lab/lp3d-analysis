@@ -5,14 +5,16 @@ data:
     height: 256
     width: 256
   # ABSOLUTE path to data directory
-  data_dir: /tmp/data/chickadee-crop
-  # data_dir: /teamspace/studios/data/chickadee-crop
+  # data_dir: /tmp/data/chickadee-crop
+  data_dir: /teamspace/studios/data/chickadee-crop
+  # data_dir: /teamspace/studios/this_studio/pseudo_labeled_dataset_chickadee_nonlin_EKS_varinf_rand_new/chickadee-crop
   # ABSOLUTE path to unlabeled videos' directory
-  video_dir: /tmp/data/chickadee-crop/videos
-  # video_dir: /teamspace/studios/data/chickadee-crop/videos
+  # video_dir: /tmp/data/chickadee-crop/videos
+  video_dir: /teamspace/studios/data/chickadee-crop/videos
   # camera calibration files location
   # camera_params_file: /tmp/data/chickadee-crop/calibrations.csv
-  # camera_params_file: /teamspace/studios/data/chickadee-crop/calibrations.csv
+  camera_params_file: /teamspace/studios/data/chickadee-crop/calibrations.csv
+  # camera_params_file: /teamspace/studios/this_studio/pseudo_labeled_dataset_chickadee_nonlin_EKS_varinf_rand_new/chickadee-crop/calibrations.csv
   # location of labels; for example script, this should be relative to `data_dir`
   csv_file:
     - CollectedData_lBack.csv
@@ -107,6 +109,12 @@ data:
     baseTail-rightAnkle: red
     rightAnkle-rightFoot: red
 
+# Latent models configuration for post-processing
+# latent_models:
+  # PCA model path for variance inflation in EKS multiview
+  # pca_model_path: /teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_chickadee-crop_10pcs.pkl
+  # # FA model path for variance inflation in EKS multiview
+  # fa_model_path: /teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_chickadee-crop_12pcs.pkl  # Set to null if not using FA model in case we don't have varinf 
 
 
 training:
@@ -116,6 +124,11 @@ training:
   # dlc-top-down- dlc augmentations plus vertical and horizontal flips
   imgaug: dlc
   # imgaug: dlc-mv # I replaced for multiview augmentations 
+  # Control whether to use 3D augmentations for multiview models when camera parameters are present
+  # True: Use dlc-mv (no 2D geometric transforms) when camera params exist
+  # False: Use specified imgaug pipeline regardless of camera params
+  # null/None: Default behavior (use dlc-mv when camera params exist)
+  imagug_3d: True  # This allows you to use regular dlc augmentations even with camera params
   # batch size of labeled data during training
   train_batch_size: 8
   # batch size of labeled data during validation
@@ -161,6 +174,13 @@ training:
       milestones: [2000, 3000, 4000]
       gamma: 0.5
   uniform_heatmaps_for_nan_keypoints: true
+  
+  # curriculum learning configuration for patch masking
+  patch_mask:
+    init_step: 700
+    final_step: 5000
+    init_ratio: 0.0
+    final_ratio: 0.5
 
 model:
   # list of unsupervised losses
@@ -189,7 +209,7 @@ dali:
     train:
       sequence_length: 32
     predict:
-      sequence_length: 128
+      sequence_length: 32 #128
   context:
     train:
       batch_size: 16
@@ -225,6 +245,13 @@ losses:
     # nan removal value.
     # (in prob; heatmaps with max prob values are removed)
     prob_threshold: 0.05
+  
+  supervised_pairwise_projections:
+    # weight in front of pairwise projection loss
+    log_weight: 0.3
+    # absolute error (in pixels) below which pairwise projection loss is zeroed out; if not null, this
+    # parameter takes precedence over `empirical_epsilon_percentile`
+    epsilon: null
 
 eval:
   # predict? used in scripts/train_hydra.py

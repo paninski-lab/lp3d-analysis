@@ -23,6 +23,13 @@ from eks.utils import convert_lp_dlc, format_data, make_dlc_pandas_index
 from eks.core import jax_ensemble
 from eks.marker_array import MarkerArray, input_dfs_to_markerArray
 
+from lp3d_analysis.utils import (
+    add_variance_columns,
+    fill_ensemble_results,
+    prepare_uncropped_csv_files,
+    generate_cropped_csv_file,
+)
+
 
 '''
 This is loading the pca and FA objects - we will probably not use it like that later 
@@ -30,12 +37,14 @@ This is loading the pca and FA objects - we will probably not use it like that l
 
 
 # pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_mirror-mouse-separate.pkl"
-# pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_fly.pkl"
-# pca_model_path = "/teamspace/studios/this_studio/pca_object_ooD_chickadee-crop_6pcs_new.pkl"
+# pca_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_fly.pkl"
+# pca_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_chickadee-crop_6pcs.pkl"
+# pca_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_chickadee-crop_6pcs_sep8.pkl"
 
-# # # # # fa_model_path = "/teamspace/studios/this_studio/pca_object_inD_mirror-mouse-separate.pkl"
-# fa_model_path = "/teamspace/studios/this_studio/fa_object_inD_fly.pkl"
-# fa_model_path = "/teamspace/studios/this_studio/pca_object_inD_chickadee-crop_6pcs.pkl"
+# fa_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_mirror-mouse-separate.pkl"
+# fa_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/fa_object_inD_fly.pkl"
+# fa_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_chickadee-crop_6pcs.pkl"
+# fa_model_path = "/teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_chickadee-crop_6pcs_sep8.pkl"
 
 # # Custom function to force pickle to find NaNPCA2 in pca_global
 # class CustomUnpickler(pickle.Unpickler):
@@ -48,7 +57,7 @@ This is loading the pca and FA objects - we will probably not use it like that l
 #             return EnhancedFactorAnalysis
 #         return super().find_class(module, name)
 
-# # Load PCA object before defining functions
+## Load PCA object before defining functions
 # try:
 #     with open(pca_model_path, "rb") as f:
 #         pca_object = CustomUnpickler(f).load()
@@ -79,52 +88,62 @@ This is loading the pca and FA objects - we will probably not use it like that l
 
 
 
-def generate_cropped_csv_file(
-    input_csv_file: str | Path,
-    input_bbox_file: str | Path,
-    output_csv_file: str | Path,
-    img_height: int | None = None,
-    img_width: int | None = None,
-    mode: str = "subtract",
-):
-    """Translate a CSV file by bbox file.
-    Requires the files have the same index.
+# def generate_cropped_csv_file(
+#     input_csv_file: str | Path,
+#     input_bbox_file: str | Path,
+#     output_csv_file: str | Path,
+#     img_height: int | None = None,
+#     img_width: int | None = None,
+#     mode: str = "subtract",
+# ):
+#     """Translate a CSV file by bbox file.
+#     Requires the files have the same index.
 
-    Defaults to subtraction. Can use mode='add' to map from cropped to original space.
-    """
-    if mode not in ("add", "subtract"):
-        raise ValueError(f"{mode} is not a valid mode")
-    # Read csv file from pose_model.cfg.data.csv_file
-    # TODO: reuse header_rows logic from datasets.py
-    csv_data = pd.read_csv(input_csv_file, header=[0, 1, 2], index_col=0)
-    csv_data = io_utils.fix_empty_first_row(csv_data)
+#     Args:
+#         mode='subtract': Map from original space to cropped space
+#         mode='add': Map from cropped space to original space
+#     """
+#     if mode not in ("add", "subtract"):
+#         raise ValueError(f"{mode} is not a valid mode")
+    
+#     # Read csv file from pose_model.cfg.data.csv_file
+#     # TODO: reuse header_rows logic from datasets.py
+#     csv_data = pd.read_csv(input_csv_file, header=[0, 1, 2], index_col=0)
+#     csv_data = io_utils.fix_empty_first_row(csv_data)
 
-    bbox_data = pd.read_csv(input_bbox_file, index_col=0)
+#     bbox_data = pd.read_csv(input_bbox_file, index_col=0)
 
-    for col in csv_data.columns:
-        if col[-1] in ("x", "y"):
-            vals = csv_data[col]
+#     for col in csv_data.columns:
+#         if col[-1] in ("x", "y"):
+#             vals = csv_data[col].copy()
             
-            if mode == "add":
-                if col[-1] == "x" and img_width:
-                    vals = (vals / img_width) * bbox_data["w"]
-                elif col[-1] == "y" and img_height:
-                    vals = (vals / img_height) * bbox_data["h"]
+#             if mode == "add":
+#                 # Map from cropped space to original space
+#                 # First scale from cropped coordinates to bbox coordinates
+#                 if col[-1] == "x" and img_width:
+#                     vals = (vals / img_width) * bbox_data["w"]
+#                 elif col[-1] == "y" and img_height:
+#                     vals = (vals / img_height) * bbox_data["h"]
                 
-            if mode == "subtract":
-                csv_data[col] = vals - bbox_data[col[-1]]
-            else:
-                csv_data[col] = vals + bbox_data[col[-1]]
+#                 # Then add bbox offset to get original coordinates
+#                 csv_data[col] = vals + bbox_data[col[-1]]
+                
+#             elif mode == "subtract":
+#                 # Map from original space to cropped space
+#                 # First subtract bbox offset to get bbox-relative coordinates
+#                 vals = vals - bbox_data[col[-1]]
+                
+#                 # Then scale from bbox coordinates to cropped coordinates
+#                 if col[-1] == "x" and img_width:
+#                     csv_data[col] = (vals / bbox_data["w"]) * img_width 
+#                 elif col[-1] == "y" and img_height:
+#                     csv_data[col] = (vals / bbox_data["h"]) * img_height
+#                 else:
+#                     csv_data[col] = vals
 
-            if mode == "subtract":
-                if col[-1] == "x" and img_width:
-                    csv_data[col] = (csv_data[col] / bbox_data["w"]) * img_width 
-                elif col[-1] == "y" and img_height:
-                    csv_data[col] = (csv_data[col] / bbox_data["h"]) * img_height
-
-    output_csv_file = Path(output_csv_file)
-    output_csv_file.parent.mkdir(parents=True, exist_ok=True)
-    csv_data.to_csv(output_csv_file)
+#     output_csv_file = Path(output_csv_file)
+#     output_csv_file.parent.mkdir(parents=True, exist_ok=True)
+#     csv_data.to_csv(output_csv_file)
 
 
 def process_predictions(pred_file: str, include_likelihood = True, include_variance = False, include_posterior_variance = False, column_structure=None):
@@ -418,43 +437,43 @@ def process_ensemble_frames(
             
         return results_df
 
-def add_variance_columns(column_structure):
-    """Add variance columns to the column structure"""
-    current_tuples = list(column_structure)
+# def add_variance_columns(column_structure):
+#     """Add variance columns to the column structure"""
+#     current_tuples = list(column_structure)
     
-    # Add variance columns for each bodypart
-    new_tuples = []
-    for scorer, bodypart, coord in current_tuples:
-        new_tuples.append((scorer, bodypart, coord))
-        if coord == 'likelihood':  # After each likelihood, add variance columns
-            new_tuples.append((scorer, bodypart, 'x_ens_var'))
-            new_tuples.append((scorer, bodypart, 'y_ens_var'))
+#     # Add variance columns for each bodypart
+#     new_tuples = []
+#     for scorer, bodypart, coord in current_tuples:
+#         new_tuples.append((scorer, bodypart, coord))
+#         if coord == 'likelihood':  # After each likelihood, add variance columns
+#             new_tuples.append((scorer, bodypart, 'x_ens_var'))
+#             new_tuples.append((scorer, bodypart, 'y_ens_var'))
     
-    # Create new column structure with added variance columns
-    return pd.MultiIndex.from_tuples(new_tuples, names=['scorer', 'bodyparts', 'coords'])
+#     # Create new column structure with added variance columns
+#     return pd.MultiIndex.from_tuples(new_tuples, names=['scorer', 'bodyparts', 'coords'])
 
-def fill_ensemble_results(
-    results_df: pd.DataFrame, 
-    ensemble_preds: np.ndarray, 
-    ensemble_vars: np.ndarray, 
-    ensemble_likes: np.ndarray, 
-    keypoint_names: List[str], 
-    column_structure: pd.MultiIndex
-) -> None:
-    """Fill in ensemble results into the DataFrame"""
-    for k, bp in enumerate(keypoint_names):
-        # Use scorer from column_structure if not in bp; assume first scorer applies
-        scorer = bp.split('/', 1)[0] if '/' in bp else column_structure.levels[0][0]
-        bodypart = bp.split('/', 1)[1] if '/' in bp else bp
+# def fill_ensemble_results(
+#     results_df: pd.DataFrame, 
+#     ensemble_preds: np.ndarray, 
+#     ensemble_vars: np.ndarray, 
+#     ensemble_likes: np.ndarray, 
+#     keypoint_names: List[str], 
+#     column_structure: pd.MultiIndex
+# ) -> None:
+#     """Fill in ensemble results into the DataFrame"""
+#     for k, bp in enumerate(keypoint_names):
+#         # Use scorer from column_structure if not in bp; assume first scorer applies
+#         scorer = bp.split('/', 1)[0] if '/' in bp else column_structure.levels[0][0]
+#         bodypart = bp.split('/', 1)[1] if '/' in bp else bp
 
-        # Fill coordinates and likelihood
-        results_df.loc[:, (scorer, bodypart, 'x')] = ensemble_preds[:, k, 0]
-        results_df.loc[:, (scorer, bodypart, 'y')] = ensemble_preds[:, k, 1]
-        results_df.loc[:, (scorer, bodypart, 'likelihood')] = ensemble_likes[:, k]
+#         # Fill coordinates and likelihood
+#         results_df.loc[:, (scorer, bodypart, 'x')] = ensemble_preds[:, k, 0]
+#         results_df.loc[:, (scorer, bodypart, 'y')] = ensemble_preds[:, k, 1]
+#         results_df.loc[:, (scorer, bodypart, 'likelihood')] = ensemble_likes[:, k]
         
-        # Add ensemble variances
-        results_df.loc[:, (scorer, bodypart, 'x_ens_var')] = ensemble_vars[:, k, 0]
-        results_df.loc[:, (scorer, bodypart, 'y_ens_var')] = ensemble_vars[:, k, 1]
+#         # Add ensemble variances
+#         results_df.loc[:, (scorer, bodypart, 'x_ens_var')] = ensemble_vars[:, k, 0]
+#         results_df.loc[:, (scorer, bodypart, 'y_ens_var')] = ensemble_vars[:, k, 1]
 
 
 def _get_bbox_path_fn(p: Path, results_dir: Path, data_dir: Path) -> Path:
@@ -472,30 +491,39 @@ def _get_bbox_path_fn(p: Path, results_dir: Path, data_dir: Path) -> Path:
     bbox_path = p_in_data_dir.with_stem(p.stem + "_bbox")
     return bbox_path
 
-def prepare_uncropped_csv_files(csv_files: list[str], get_bbox_path_fn: Callable[[Path, ], Path]):
-    # Check if a bbox file exists
-    # has_checked_bbox_file caches the file check
-    has_checked_bbox_file = False
-    csv_files_uncropped = []
-    for p in csv_files:
-        p = Path(p)
-        # p is the absolute path to the prediction file.
-        # The bbox path has the same relative directory structure but rooted in the data directory
-        # and suffixed by _bbox.csv.
-        bbox_path = get_bbox_path_fn(p)
+# def prepare_uncropped_csv_files(csv_files: list[str], get_bbox_path_fn: Callable[[Path, ], Path]):
+#     # Check if a bbox file exists
+#     # has_checked_bbox_file caches the file check
+#     has_checked_bbox_file = False
+#     csv_files_uncropped = []
+    
+#     for p in csv_files:
+#         p = Path(p)
+#         # p is the absolute path to the prediction file.
+#         # The bbox path has the same relative directory structure but rooted in the data directory
+#         # and suffixed by _bbox.csv.
+#         bbox_path = get_bbox_path_fn(p)
 
-        if not has_checked_bbox_file:
-            if not bbox_path.is_file():
-                return None
-            has_checked_bbox_file = True
+#         if not has_checked_bbox_file:
+#             if not bbox_path.is_file():
+#                 print(f"Warning: Bbox file not found at {bbox_path}. Skipping bbox processing.")
+#                 return None
+#             has_checked_bbox_file = True
+#             print(f"Found bbox file at {bbox_path}. Proceeding with bbox processing.")
 
-        # If there's a bbox_file, remap to original space by adding bbox df to preds df.
-        # Save as _uncropped.csv version of preds_file.
-        remapped_p = p.with_stem(p.stem + "_uncropped")
-        csv_files_uncropped.append(str(remapped_p))
-        generate_cropped_csv_file(p, bbox_path, remapped_p, img_height = 320, img_width = 320, mode="add")
+#         # If there's a bbox_file, remap to original space by adding bbox df to preds df.
+#         # Save as _uncropped.csv version of preds_file.
+#         remapped_p = p.with_stem(p.stem + "_uncropped")
+#         csv_files_uncropped.append(str(remapped_p))
+        
+#         try:
+#             generate_cropped_csv_file(p, bbox_path, remapped_p, img_height = 320, img_width = 320, mode="add")
+#             print(f"Successfully generated uncropped file: {remapped_p}")
+#         except Exception as e:
+#             print(f"Error generating uncropped file for {p}: {e}")
+#             raise
 
-    return csv_files_uncropped
+#     return csv_files_uncropped
 
 # Modified process_multiview_directory function to handle results for all views properly
 def process_multiview_directory(
@@ -1085,13 +1113,13 @@ def run_eks_multiview(
     camera_dfs, smooth_params_final = ensemble_kalman_smoother_multicam(
         marker_array = marker_array,
         keypoint_names = keypoint_names,
-        smooth_param = None,
+        smooth_param = 10000, #None,
         quantile_keep_pca= quantile_keep_pca, #quantile_keep_pca
         camera_names = views,
         s_frames = [(None,None)], # Keemin wil fix 
         avg_mode = avg_mode,
         var_mode = var_mode,
-        inflate_vars = False,
+        inflate_vars = True,
         inflate_vars_kwargs = inflate_vars_kwargs,
         n_latent = 6,
         verbose = verbose,

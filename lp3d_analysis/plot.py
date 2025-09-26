@@ -94,6 +94,7 @@ def generate_paths_with_models_and_ensembles(
     ensemble_seed, 
     ensemble_methods, 
     n_hand_labels, 
+    prediction_data = True,
     base_path="/teamspace/studios",
     data_dir="data",
     studio_dir="this_studio",
@@ -139,46 +140,50 @@ def generate_paths_with_models_and_ensembles(
             for view in views
         }
 
-
-    # Generate prediction paths
-    file_paths = {}
-    for view in views:
-        view_data = {}
-        
-        # Add individual model predictions
-        for seed in seed_dirs:
-            base_dir = os.path.join(
-                base_path, 
-                studio_dir, 
-                output_dir,
-                dataset_name,
-                results_dir,
-                f"{model_type}_{n_hand_labels}_{seed}",
-                video_dir
-            )
-            print(base_dir)
-            matching_files = find_prediction_files(base_dir, view)
-            if matching_files:
-                view_data[seed] = matching_files[0] # it was matching_files[0]
-        
-        # Add ensemble predictions
-        if ensemble_methods is not None and ensemble_seed is not None:
-            for method in ensemble_methods:
+    if prediction_data:
+        # Generate prediction paths
+        file_paths = {}
+        for view in views:
+            view_data = {}
+            
+            # Add individual model predictions
+            for seed in seed_dirs:
                 base_dir = os.path.join(
-                    base_path,
-                    studio_dir,
+                    base_path, 
+                    studio_dir, 
                     output_dir,
                     dataset_name,
                     results_dir,
-                    f"{model_type}_{n_hand_labels}_{ensemble_seed}",
-                    method,
+                    f"{model_type}_{n_hand_labels}_{seed}",
                     video_dir
                 )
+                print(f"base_dir: {base_dir}")
+                print(base_dir)
                 matching_files = find_prediction_files(base_dir, view)
                 if matching_files:
-                    view_data[method] = matching_files[0] # it was matching_files[0]
-        
-        file_paths[view] = view_data
+                    view_data[seed] = matching_files[0] # it was matching_files[0]
+            
+            # Add ensemble predictions
+            if ensemble_methods is not None and ensemble_seed is not None:
+                for method in ensemble_methods:
+                    base_dir = os.path.join(
+                        base_path,
+                        studio_dir,
+                        output_dir,
+                        dataset_name,
+                        results_dir,
+                        f"{model_type}_{n_hand_labels}_{ensemble_seed}",
+                        method,
+                        video_dir
+                    )
+                    matching_files = find_prediction_files(base_dir, view)
+                    if matching_files:
+                        view_data[method] = matching_files[0] # it was matching_files[0]
+            
+            file_paths[view] = view_data
+    else:
+        file_paths = {}
+        print("No prediction data")
     
     return In_Dist_paths, Out_Dist_paths, file_paths
 
