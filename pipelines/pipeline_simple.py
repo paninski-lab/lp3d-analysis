@@ -30,10 +30,12 @@ VALID_MODEL_TYPES = [
     'multiview_transformer_learnable',
     'multiview_transformer_learnable_crossview',
     'multiview_transformer',
+    'multiview_transformer_mhcrnn',  # New multiview transformer MHCRNN model type
     'mvt_cross_view_head',
     'mvt_3d_loss',
     'mvt_unsupervised_losses',
     'mvt_semisupervised',  # New model type for semi-supervised training with unsupervised losses
+    'mvt_transformer_mhcrnn_semisupervised',  # New model type for semi-supervised multiview transformer MHCRNN
 ]
 
 
@@ -357,6 +359,28 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
             },
             "data": {
                 "downsample_factor": 2,  # Set to 2 for heatmap_cnn head
+            },
+        })
+    elif model_type == 'multiview_transformer_mhcrnn':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer_mhcrnn",
+                "losses_to_use": [],
+                "head": "heatmap_mhcrnn"
+            },
+            "data": {
+                "downsample_factor": 2,  # Set to 2 for heatmap_mhcrnn head
+            },
+        })
+    elif model_type == 'mvt_transformer_mhcrnn_semisupervised':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer_mhcrnn",
+                "losses_to_use": ["pca_multiview"],  # Only PCA multiview loss
+                "head": "heatmap_mhcrnn"
+            },
+            "data": {
+                "downsample_factor": 2,  # Set to 2 for heatmap_mhcrnn head
             },
         })
 

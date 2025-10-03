@@ -179,7 +179,7 @@ training:
   patch_mask:
     init_step: 700
     final_step: 5000
-    init_ratio: 0.0
+    init_ratio: 0.1
     final_ratio: 0.5
 
 model:

@@ -175,13 +175,14 @@ training:
   patch_mask:
     init_step: 700
     final_step: 5000
-    init_ratio: 0.0
+    init_ratio: 0.1
     final_ratio: 0.5 # to disable patch masking set to 0.0
 
 model:
   # list of unsupervised losses
   # "pca_singleview" | "pca_multiview" | "temporal" | "unimodal_mse" | "unimodal_kl" | "supervised_pairwise_projections"
-  losses_to_use: []
+  losses_to_use: ["pca_multiview"]
+  # losses_to_use: []
   # backbone network:
   # resnet18 | resnet34 | resnet50 | resnet101 | resnet152 | resnet50_contrastive
   # resnet50_animalpose_apose | resnet50_animal_ap10k
@@ -217,7 +218,7 @@ losses:
   # loss = projection onto the discarded eigenvectors
   pca_multiview:
     # weight in front of PCA loss
-    log_weight: 6.0 # the weight we want for the pca loss. the smaller it is the higher the weight 
+    log_weight: 5.0 # the weight we want for the pca loss. the smaller it is the higher the weight 
     # predictions whould lie within the low-d subspace spanned by these components
     components_to_keep: 3
     # absolute error (in pixels) below which pca loss is zeroed out; if not null, this
