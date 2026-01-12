@@ -1,4 +1,12 @@
 import os
+# Configure JAX memory settings before any JAX imports to prevent segmentation faults
+# These settings help prevent "Cannot allocate memory" errors during LLVM compilation
+os.environ.setdefault('XLA_PYTHON_CLIENT_PREALLOCATE', 'false')
+os.environ.setdefault('XLA_PYTHON_CLIENT_MEM_FRACTION', '0.5')
+xla_flags = os.environ.get('XLA_FLAGS', '')
+if '--xla_force_host_platform_device_count' not in xla_flags:
+    os.environ['XLA_FLAGS'] = f'{xla_flags} --xla_force_host_platform_device_count=1'.strip()
+
 import re
 import pandas as pd
 import numpy as np
@@ -24,7 +32,7 @@ from lightning_pose.utils import io as io_utils
 from eks.singlecam_smoother import ensemble_kalman_smoother_singlecam, fit_eks_singlecam
 from eks.multicam_smoother import ensemble_kalman_smoother_multicam
 from eks.utils import convert_lp_dlc, format_data, make_dlc_pandas_index
-from eks.core import jax_ensemble
+from eks.core import ensemble
 from eks.marker_array import MarkerArray, input_dfs_to_markerArray
 
 from lp3d_analysis.utils import (
@@ -142,6 +150,40 @@ def _get_bbox_path_fn(p: Path, results_dir: Path, data_dir: Path) -> Path:
     return bbox_path
 
 
+def _get_eks_calibration_file(session_name_or_dir: str, data_dir: str, views: List[str]) -> Optional[str]:
+    """
+    Get the calibration TOML file path for a specific session.
+    
+    Args:
+        session_name_or_dir: Directory name or filename containing session name 
+                            (e.g., "PRL43_200617_131904_lBack" or "session_Cam-A.csv")
+        data_dir: Path to data directory
+        views: List of view names to remove from session name
+        
+    Returns:
+        Path to calibration TOML file, or None if not found
+    """
+    from lp3d_analysis.utils import extract_session_info, extract_sequence_name
+    
+    # If it's a directory name (no .csv extension), use extract_sequence_name
+    # Otherwise, use extract_session_info for filenames
+    if session_name_or_dir.endswith('.csv'):
+        # It's a filename - extract session name
+        session_name, _ = extract_session_info(session_name_or_dir, views)
+        base_session_name = session_name.replace('.short', '')
+    else:
+        # It's a directory name - extract sequence name (removes view and .short)
+        base_session_name = extract_sequence_name(session_name_or_dir, views)
+    
+    # Look for calibration file in data_dir/calibrations/{base_session_name}.toml
+    calib_path = Path(data_dir) / "calibrations" / f"{base_session_name}.toml"
+    
+    if calib_path.exists():
+        return str(calib_path)
+    
+    return None
+
+
 def process_ensemble_frames(
     all_pred_files: List[str],
     keypoint_names: List[str],
@@ -173,12 +215,12 @@ def process_ensemble_frames(
     stacked_arrays = np.stack(stacked_arrays, axis=-1)
     
     if mode in ['ensemble_mean', 'ensemble_median']:
-        # Process with jax_ensemble
+        # Process with ensemble
         stacked_arrays_reshaped = stacked_arrays.transpose(2, 0, 1)  # (5, 601, 90)
         stacked_arrays_reshaped = input_dfs_to_markerArray([stacked_dfs], keypoint_names, camera_names=[""])
         avg_mode = 'mean' if mode == 'ensemble_mean' else 'median'
         
-        ensemble_marker_array = jax_ensemble(
+        ensemble_marker_array = ensemble(
             stacked_arrays_reshaped, 
             avg_mode=avg_mode, 
             var_mode='confidence_weighted_var',
@@ -210,7 +252,8 @@ def process_multiple_video_single_view(
     seed_dirs: List[str],
     inference_dir: str,
     output_dir: str,
-    mode: str
+    mode: str,
+    overwrite: bool = False,
 ) -> None:
     """Process multiple video files for a single view"""
     
@@ -220,6 +263,12 @@ def process_multiple_video_single_view(
     view_files = [f for f in base_files if view in f and f.endswith('.csv')] # all csv files with view name 
     # Process each file (representing a different video) separately
     for file_name in view_files:
+        # Check if output file already exists
+        preds_file = os.path.join(output_dir, file_name)
+        if os.path.exists(preds_file) and not overwrite:
+            print(f"Skipping {file_name} - output file already exists (overwrite=False)")
+            continue
+        
         print(f"Processing file: {file_name}")
         
         # Collect this file from all seed directories
@@ -246,8 +295,7 @@ def process_multiple_video_single_view(
             print(f"Invalid mode: {mode}")
             continue
         
-        # Save results using the same filename
-        preds_file = os.path.join(output_dir, file_name)
+        # Save results using the same filename (preds_file already set above)
         results_df.to_csv(preds_file)
         print(f"Saved ensemble {mode} predictions for {file_name} to {preds_file}")
 
@@ -265,7 +313,8 @@ def post_process_ensemble_videos(
     n_latent: int = 3,
     # n_latent: int | None = None,
     pca_object = None,
-    fa_object = None
+    fa_object = None,
+    non_linear: bool = False,
 ) -> None:
     """Post-process ensemble videos"""
     print(f"n_latent is: {n_latent} ")
@@ -324,8 +373,34 @@ def post_process_ensemble_videos(
             # There should be one file per session. These we call "first view sessions".
             first_view_sessions = list(map(str, files_by_view[views[0]]))
             for first_view_session in first_view_sessions:
+                # Check if all output files already exist for this session
+                all_outputs_exist = True
+                for view in views:
+                    session = first_view_session.replace(views[0], view)
+                    result_file = Path(output_dir) / session
+                    if not result_file.exists():
+                        all_outputs_exist = False
+                        break
+                
+                if all_outputs_exist and not overwrite:
+                    print(f"Skipping session {first_view_session} - all output files already exist (overwrite=False)")
+                    continue
+                
                 # Process multiview case for videos
                 all_pred_files = []
+
+                # Get calibration file for this session if non_linear is enabled
+                calibration_file = None
+                if non_linear:
+                    calibration_file = _get_eks_calibration_file(
+                        first_view_session, 
+                        cfg_lp.data.data_dir, 
+                        views
+                    )
+                    if calibration_file:
+                        print(f"[EKS] Using nonlinear EKS for session: {first_view_session}")
+                    else:
+                        print(f"[EKS] WARNING: nonlinear EKS requested but calibration file not found, falling back to linear EKS")
 
                 # Collect files for all views and seeds
                 for view in views:
@@ -357,6 +432,7 @@ def post_process_ensemble_videos(
                     inflate_vars_kwargs=inflate_vars_kwargs,
                     n_latent=n_latent,
                     pca_object=pca_object,
+                    calibration=calibration_file,
                 )
 
                 # Save results for each view
@@ -386,7 +462,8 @@ def post_process_ensemble_videos(
                     seed_dirs=seed_dirs,
                     inference_dir=inference_dir,
                     output_dir=output_dir,
-                    mode=mode
+                    mode=mode,
+                    overwrite=overwrite,
                 )
 
 
@@ -444,7 +521,8 @@ def extract_frame_numbers(indices: List[str]) -> Dict[str, int]:
         parts = idx.split('/')
         if len(parts) >= 3:
             frame_file = parts[2]
-            frame_match = re.search(r'img(\d+)\.png', frame_file)
+            # Match both .png and .jpg extensions, and handle leading zeros
+            frame_match = re.search(r'img(\d+)\.(png|jpg)', frame_file)
             if frame_match:
                 img_to_frame_num[idx] = int(frame_match.group(1))
     return img_to_frame_num
@@ -457,8 +535,16 @@ def process_numeric_indices(
     combined_df: pd.DataFrame
 ) -> pd.DataFrame:
     """Process prediction file with numeric indices."""
+    if not img_to_frame_num:
+        print("Warning: img_to_frame_num is empty, cannot map frames")
+        return combined_df
+    
     sample_frames = list(img_to_frame_num.values())[:5]
     frame_exists = [frame in pred_df.index for frame in sample_frames]
+    
+    print(f"Sample frame numbers from image paths: {sample_frames}")
+    print(f"Prediction file index range: {pred_df.index.min()} to {pred_df.index.max()}")
+    print(f"Prediction file has {len(pred_df)} rows")
 
     if any(frame_exists):
         match_count = 0
@@ -468,10 +554,27 @@ def process_numeric_indices(
                 match_count += 1
         print(f"Matched {match_count} frames by direct frame number")
     else:
+        print("Frame numbers don't match directly, attempting position-based mapping...")
+        print("WARNING: Position-based mapping assumes labeled frames are sequential in the video.")
+        print("This may not be correct if labeled frames are sparse or non-sequential.")
+        
+        frame_nums = sorted(img_to_frame_num.values())
+        if len(frame_nums) > 0:
+            min_frame = min(frame_nums)
+            max_frame = max(frame_nums)
+            pred_min = int(pred_df.index.min())
+            pred_max = int(pred_df.index.max())
+            print(f"Labeled frame range: {min_frame} to {max_frame}, Prediction index range: {pred_min} to {pred_max}")
+        
         sorted_pred_indices = sorted(pred_df.index)
         sorted_img_paths = sorted(img_to_frame_num.keys(), key=lambda x: img_to_frame_num[x])
         min_length = min(len(sorted_pred_indices), len(sorted_img_paths))
         
+        if min_length == 0:
+            print(f"Warning: min_length is 0. img_to_frame_num has {len(img_to_frame_num)} entries, pred_df has {len(pred_df)} rows")
+            return combined_df
+        
+        print(f"Falling back to position-based mapping for {min_length} frames (first {min(min_length, 5)} frame numbers: {[img_to_frame_num[img] for img in sorted_img_paths[:5]]})")
         for i in range(min_length):
             img_path = sorted_img_paths[i]
             pred_idx = sorted_pred_indices[i]
@@ -492,7 +595,8 @@ def process_string_indices(
         match_count = 0
         for img_path, frame_num in img_to_frame_num.items():
             for pred_idx in seq_indices:
-                pred_frame_match = re.search(r'img(\d+)\.png', pred_idx)
+                # Match both .png and .jpg extensions
+                pred_frame_match = re.search(r'img(\d+)\.(png|jpg)', pred_idx)
                 if pred_frame_match and int(pred_frame_match.group(1)) == frame_num:
                     combined_df.loc[img_path] = pred_df.loc[pred_idx]
                     match_count += 1
@@ -506,7 +610,8 @@ def process_prediction_file(
     pred_file: str,
     collected_df: pd.DataFrame,
     img_to_frame_num: Dict[str, int],
-    combined_df: Optional[pd.DataFrame]
+    combined_df: Optional[pd.DataFrame],
+    sequence: str
 ) -> Optional[pd.DataFrame]:
     """Process a single prediction file and update combined DataFrame."""
     try:
@@ -518,10 +623,15 @@ def process_prediction_file(
             combined_df = pd.DataFrame(index=collected_df.index, columns=pred_df.columns)
             print(f"Initialized combined DataFrame with shape: {combined_df.shape}")
 
+        # Check if img_to_frame_num is empty
+        if not img_to_frame_num:
+            print(f"Warning: img_to_frame_num is empty for sequence {sequence}. Cannot map frames.")
+            return combined_df
+
         if pred_df.index.dtype == 'int64' or all(isinstance(x, int) for x in pred_df.index if isinstance(x, (int, float))):
             return process_numeric_indices(pred_df, img_to_frame_num, combined_df)
         else:
-            return process_string_indices(pred_df, img_to_frame_num, combined_df)
+            return process_string_indices(pred_df, img_to_frame_num, combined_df, sequence)
 
     except Exception as e:
         print(f"Error processing prediction file {pred_file}: {e}")
@@ -647,10 +757,16 @@ def extract_labeled_frame_predictions(
                 continue
 
             img_to_frame_num = extract_frame_numbers(indices)
+            print(f"Extracted {len(img_to_frame_num)} frame numbers from {len(indices)} indices")
+            
+            if not img_to_frame_num:
+                print(f"Warning: Could not extract frame numbers from indices for sequence {sequence}")
+                print(f"Sample indices: {indices[:3] if len(indices) >= 3 else indices}")
+                continue
             
             for pred_file in sequence_pred_files:
                 print(f"Processing file: {os.path.basename(pred_file)}")
-                combined_df = process_prediction_file(pred_file, collected_df, img_to_frame_num, combined_df)
+                combined_df = process_prediction_file(pred_file, collected_df, img_to_frame_num, combined_df, sequence)
 
         # Save and evaluate results
         save_and_evaluate_results(combined_df, output_dir, view, cfg_lp)
@@ -710,12 +826,11 @@ def run_eks_multiview(
     quantile_keep_pca: float = 50,
     avg_mode: str = 'median',
     var_mode: str = 'confidence_weighted_var',
-    # inflate_vars_likelihood_thresh = None,
-    # inflate_vars_v_quantile_thresh = None,
     inflate_vars_kwargs: dict = {},
     verbose: bool = False,
     n_latent: int =3,
     pca_object = None,
+    calibration: Optional[str] = None,
 ) -> dict[str, pd.DataFrame]:
 
     """
@@ -735,6 +850,7 @@ def run_eks_multiview(
         avg_mode: Method for averaging across ensemble members. Default is 'median'.
         var_mode: Method for computing ensemble variance. Default is 'confidence_weighted_var'.
         verbose: Enable detailed progress output. Default is False.
+        calibration: Path to .toml calibration file for nonlinear EKS. If None, uses linear EKS.
 
     Returns:
         dict[str, pd.DataFrame]: Dictionary mapping view names to smoothed DataFrames containing
@@ -747,21 +863,32 @@ def run_eks_multiview(
     # Uncomment this to skip eks for testing purposes:
     #return {view: markers_list[i][0] for i, view in enumerate(views)}
 
+    # Load calibration if provided for nonlinear EKS
+    camgroup = None
+    if calibration is not None:
+        from aniposelib.cameras import CameraGroup
+        try:
+            camgroup = CameraGroup.load(calibration)
+        except Exception as e:
+            print(f"[EKS] ERROR: Could not load calibration file, falling back to linear EKS")
+            camgroup = None
+
     # run the ensemble kalman smoother for multiview data
     camera_dfs, smooth_params_final = ensemble_kalman_smoother_multicam(
         marker_array = marker_array,
         keypoint_names = keypoint_names,
-        smooth_param = 10000,#None,
+        smooth_param = 10000, #None,
         quantile_keep_pca= quantile_keep_pca, 
         camera_names = views,
         s_frames = [(None,None)], # Keemin wil fix 
         avg_mode = avg_mode,
         var_mode = var_mode,
-        inflate_vars = False,
+        inflate_vars = True,
         inflate_vars_kwargs = inflate_vars_kwargs,
         n_latent = n_latent,
         verbose = verbose,
         pca_object = pca_object,
+        camgroup = camgroup,
     )
 
     # Process results for each view

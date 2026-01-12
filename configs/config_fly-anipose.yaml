@@ -124,7 +124,7 @@ training:
   # True: Use dlc-mv (no 2D geometric transforms) when camera params exist
   # False: Use specified imgaug pipeline regardless of camera params
   # null/None: Default behavior (use dlc-mv when camera params exist)
-  imagug_3d: True  # This allows you to use regular dlc augmentations even with camera params
+  imgaug_3d: True  # This allows you to use regular dlc augmentations even with camera params
   # batch size of labeled data during training
   train_batch_size: 8 # for the supervised one it is 8 for the ctx 4 
   # batch size of labeled data during validation
@@ -181,14 +181,16 @@ training:
 model:
   # list of unsupervised losses
   # "pca_singleview" | "pca_multiview" | "temporal" | "unimodal_mse" | "unimodal_kl" | "supervised_pairwise_projections"
-  losses_to_use: ["pca_multiview"]
-  # losses_to_use: []
+  # losses_to_use: ["pca_multiview"]
+  losses_to_use: []
   # backbone network:
   # resnet18 | resnet34 | resnet50 | resnet101 | resnet152 | resnet50_contrastive
   # resnet50_animalpose_apose | resnet50_animal_ap10k
   # resnet50_human_jhmdb | resnet50_human_res_rle | resnet50_human_top_res
   # efficientnet_b0 | efficientnet_b1 | efficientnet_b2
   backbone: vits_dino # in general use resnet50_animal_ap10k
+
+  # backbone_checkpoint: /teamspace/studios/data/fly-anipose/pretrained_backbones/mae.safetensors
   # prediction mode - "heatmap" | "regression" | "heatmap_mhcrnn" | "heatmap_multiview" | "heatmap_multiview_transformer"
   model_type: heatmap_multiview_transformer #heatmap # this is for the vitb_imagenet
   # head mode - "heatmap_cnn" | "feature_transformer" | "feature_transformer_learnable" | "feature_transformer_learnable_crossview" | "trans_fusion"

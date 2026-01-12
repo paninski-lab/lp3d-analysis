@@ -2,14 +2,28 @@ import argparse
 import os
 import copy
 
+# Configure JAX memory settings BEFORE any imports to prevent segmentation faults
+# These must be set before JAX is imported anywhere
+os.environ.setdefault('XLA_PYTHON_CLIENT_PREALLOCATE', 'false')
+os.environ.setdefault('XLA_PYTHON_CLIENT_MEM_FRACTION', '0.5')  # Reduced to 30% for more headroom
+xla_flags = os.environ.get('XLA_FLAGS', '')
+if '--xla_force_host_platform_device_count' not in xla_flags:
+    os.environ['XLA_FLAGS'] = f'{xla_flags} --xla_force_host_platform_device_count=1'.strip()
+# Disable JAX's aggressive compilation to prevent LLVM memory errors
+os.environ.setdefault('JAX_PLATFORMS', 'cpu')
+os.environ.setdefault('XLA_PYTHON_CLIENT_ALLOCATOR', 'default')
+# Disable JIT compilation to prevent LLVM memory allocation errors
+# Set JAX_DISABLE_JIT=true to disable JIT (slower but prevents segfaults)
+os.environ.setdefault('JAX_DISABLE_JIT', 'false')  # Disable JIT by default to prevent memory issues
+
 from omegaconf import OmegaConf
 
 from lp3d_analysis.io import load_cfgs
 from lp3d_analysis.train import train_and_infer
-from lp3d_analysis.utils import extract_ood_frame_predictions
+from lp3d_analysis.utils import extract_ood_frame_predictions, rename_pixel_error_files
 # from lp3d_analysis.post_process import  post_process_ensemble_videos , post_process_ensemble_labels #post_process_ensemble_labels,
 from lp3d_analysis.post_process import post_process_ensemble_labels #post_process_ensemble_labels,
-from lp3d_analysis.post_process_full_videos import  post_process_ensemble_videos, extract_labeled_frame_predictions #post_process_ensemble_labels,
+from lp3d_analysis.post_process_full_videos import  post_process_ensemble_videos, extract_labeled_frame_predictions
 # from lp3d_analysis.post_process_concat import  post_process_ensemble_videos, post_process_ensemble_labels_concat
 # from lp3d_analysis.post_process_concat_bbox import  post_process_ensemble_videos, post_process_ensemble_labels_concat
 # from lp3d_analysis.post_process_concat_bbox_short_version_shorter import  post_process_ensemble_videos, post_process_ensemble_labels_concat
@@ -26,16 +40,16 @@ from lp3d_analysis.post_process_full_videos import  post_process_ensemble_videos
 VALID_MODEL_TYPES = [
     'supervised',
     'context',
-    'multiview_transformer_head',# this is for the model head only 
-    'multiview_transformer_learnable',
     'multiview_transformer_learnable_crossview',
     'multiview_transformer',
     'multiview_transformer_mhcrnn',  # New multiview transformer MHCRNN model type
-    'mvt_cross_view_head',
+    'mvt_context',  # Multiview transformer with context (MHCRNN) - optimized version
     'mvt_3d_loss',
+    'mvt_heatmap_3d_loss',
     'mvt_unsupervised_losses',
     'mvt_semisupervised',  # New model type for semi-supervised training with unsupervised losses
     'mvt_transformer_mhcrnn_semisupervised',  # New model type for semi-supervised multiview transformer MHCRNN
+
 ]
 
 
@@ -81,6 +95,9 @@ def pipeline(config_file: str, for_seed: int | None = None) -> None:
                         inference_dirs=cfg_pipe.train_networks.inference_dirs,
                         overwrite=cfg_pipe.train_networks.overwrite,
                     )
+                    print(f"Debug: Rename pixel error files for {results_dir}")
+                    # Rename pixel error files for this specific model
+                    rename_pixel_error_files(results_dir)
 
                     if 'videos-for-each-labeled-frame' in cfg_pipe.train_networks.inference_dirs:
                         # Clean up/reorganize OOD data
@@ -113,7 +130,8 @@ def pipeline(config_file: str, for_seed: int | None = None) -> None:
                         mode=mode,
                         inference_dirs=cfg_pipe.train_networks.inference_dirs,
                         overwrite=mode_config.overwrite,
-                        **({"n_latent": mode_config.n_latent} if hasattr(mode_config, 'n_latent') else {})
+                        **({"n_latent": mode_config.n_latent} if hasattr(mode_config, 'n_latent') else {}),
+                        **({"non_linear": mode_config.non_linear} if hasattr(mode_config, 'non_linear') else {"non_linear": False})
                     )
     
     # Second part - make labeled frames extraction completely independent
@@ -165,6 +183,8 @@ def pipeline(config_file: str, for_seed: int | None = None) -> None:
                         mode=mode,
                         inference_dirs=cfg_pipe.train_networks.inference_dirs,
                         overwrite=mode_config.overwrite,
+                        **({"n_latent": mode_config.n_latent} if hasattr(mode_config, 'n_latent') else {}),
+                        **({"non_linear": mode_config.non_linear} if hasattr(mode_config, 'non_linear') else {"non_linear": False})
                     )
 
     # # Add processing of labeled frames after post-processing videos
@@ -248,7 +268,7 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
             "rng_seed_model_pt": rng_seed,
             "train_frames": n_hand_labels,
             # Control 3D augmentations for multiview models:
-            "imagug_3d": cfg_lp.training.get("imagug_3d", None),  # Read from config file
+            "imgaug_3d": cfg_lp.training.get("imgaug_3d", None),  # Read from config file
         }
     }]
     if model_type == 'supervised':
@@ -278,24 +298,6 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
                 "model_type": "heatmap_multiview",
                 "losses_to_use": [],
                 "head": "heatmap_cnn"
-            },
-            
-        })
-    elif model_type == 'multiview_transformer_head':
-        cfg_overrides.append({
-            "model": {
-                "model_type": "heatmap_multiview",
-                "losses_to_use": [],
-                "head": "feature_transformer"
-            },
-            
-        })
-    elif model_type == 'multiview_transformer_learnable':
-        cfg_overrides.append({
-            "model": {
-                "model_type": "heatmap_multiview",
-                "losses_to_use": [],
-                "head": "feature_transformer_learnable"
             },
             
         })
@@ -329,24 +331,21 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
             
         })
     
+    elif model_type == 'mvt_heatmap_3d_loss':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer",
+                "losses_to_use": [],
+                "head": "heatmap_cnn"
+            },
+        })
+        
     elif model_type == 'mvt_unsupervised_losses':
         cfg_overrides.append({
             "model": {
                 "model_type": "heatmap_multiview_transformer",
                 "losses_to_use": ["pca_multiview"],
                 "head": "heatmap_cnn"
-            },
-        })
-
-    elif model_type == 'mvt_cross_view_head':
-        cfg_overrides.append({
-            "model": {
-                "model_type": "heatmap_multiview_transformer",
-                "losses_to_use": [],
-                "head": "feature_transformer_learnable_crossview"
-            },
-            "data": {
-                "downsample_factor": 1,  # Set to 1 to match head configuration
             },
         })
 
@@ -370,6 +369,17 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
             },
             "data": {
                 "downsample_factor": 2,  # Set to 2 for heatmap_mhcrnn head
+            },
+        })
+    elif model_type == 'mvt_context':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer_mhcrnn",
+                "losses_to_use": [],
+                "head": "heatmap_mhcrnn_multiview"  # MHCRNN head for multiview with context
+            },
+            "data": {
+                "downsample_factor": 2,  # Set to 2 for heatmap_mhcrnn_multiview head
             },
         })
     elif model_type == 'mvt_transformer_mhcrnn_semisupervised':

@@ -5,39 +5,39 @@ data:
     height: 256
     width: 256
   # ABSOLUTE path to data directory
-  # data_dir: /tmp/data/chickadee-crop
-  data_dir: /teamspace/studios/data/chickadee-crop
+  data_dir: /tmp/data/chickadee-crop
+  # data_dir: /teamspace/studios/data/chickadee-crop
   # data_dir: /teamspace/studios/this_studio/pseudo_labeled_dataset_chickadee_nonlin_EKS_varinf_rand_new/chickadee-crop
   # ABSOLUTE path to unlabeled videos' directory
-  # video_dir: /tmp/data/chickadee-crop/videos
-  video_dir: /teamspace/studios/data/chickadee-crop/videos
+  video_dir: /tmp/data/chickadee-crop/videos
+  # video_dir: /teamspace/studios/data/chickadee-crop/videos
   # camera calibration files location
   # camera_params_file: /tmp/data/chickadee-crop/calibrations.csv
-  camera_params_file: /teamspace/studios/data/chickadee-crop/calibrations.csv
+  # camera_params_file: /teamspace/studios/data/chickadee-crop/calibrations.csv
   # camera_params_file: /teamspace/studios/this_studio/pseudo_labeled_dataset_chickadee_nonlin_EKS_varinf_rand_new/chickadee-crop/calibrations.csv
   # location of labels; for example script, this should be relative to `data_dir`
   csv_file:
-    - CollectedData_lBack.csv
-    - CollectedData_lFront.csv
+    # - CollectedData_lBack.csv
+    # - CollectedData_lFront.csv
     - CollectedData_lTop.csv
-    - CollectedData_rBack.csv
-    - CollectedData_rFront.csv
+    # - CollectedData_rBack.csv
+    # - CollectedData_rFront.csv
     - CollectedData_rTop.csv
   
   bbox_file:
-    - bboxes_lBack.csv
-    - bboxes_lFront.csv
+    # - bboxes_lBack.csv
+    # - bboxes_lFront.csv
     - bboxes_lTop.csv
-    - bboxes_rBack.csv
-    - bboxes_rFront.csv
+    # - bboxes_rBack.csv
+    # - bboxes_rFront.csv
     - bboxes_rTop.csv
 
   view_names:
-    - lBack
-    - lFront
+    # - lBack
+    # - lFront
     - lTop
-    - rBack
-    - rFront
+    # - rBack
+    # - rFront
     - rTop
   # downsample heatmaps - 2 | 3
   downsample_factor: 2
@@ -128,7 +128,7 @@ training:
   # True: Use dlc-mv (no 2D geometric transforms) when camera params exist
   # False: Use specified imgaug pipeline regardless of camera params
   # null/None: Default behavior (use dlc-mv when camera params exist)
-  imgaug_3d: True  # This allows you to use regular dlc augmentations even with camera params
+  imgaug_3d: False  # This allows you to use regular dlc augmentations even with camera params
   # batch size of labeled data during training
   train_batch_size: 8
   # batch size of labeled data during validation
@@ -179,8 +179,8 @@ training:
   patch_mask:
     init_step: 700
     final_step: 5000
-    init_ratio: 0.1
-    final_ratio: 0.5 # set to 0.0 for no patch masking 
+    init_ratio: 0.0
+    final_ratio: 0.0 # set to 0.0 for no patch masking 
 
 model:
   # list of unsupervised losses
@@ -246,12 +246,12 @@ losses:
     # (in prob; heatmaps with max prob values are removed)
     prob_threshold: 0.05
   
-  supervised_pairwise_projections:
-    # weight in front of pairwise projection loss
-    log_weight: 0.3
-    # absolute error (in pixels) below which pairwise projection loss is zeroed out; if not null, this
-    # parameter takes precedence over `empirical_epsilon_percentile`
-    epsilon: null
+  # supervised_pairwise_projections:
+  #   # weight in front of pairwise projection loss
+  #   log_weight: 0.3
+  #   # absolute error (in pixels) below which pairwise projection loss is zeroed out; if not null, this
+  #   # parameter takes precedence over `empirical_epsilon_percentile`
+  #   epsilon: null
 
 eval:
   # predict? used in scripts/train_hydra.py

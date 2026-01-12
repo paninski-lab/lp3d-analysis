@@ -3,6 +3,9 @@ import numpy as np
 import pandas as pd
 import traceback
 
+import glob
+import shutil
+
 from typing import List, Tuple, Dict, Optional, Union, Any, Callable
 from omegaconf import DictConfig
 from pathlib import Path
@@ -14,6 +17,15 @@ from lightning_pose.utils.scripts import (
 )
 
 from lp3d_analysis.io import find_sequence_dir
+
+def rename_pixel_error_files(directory: str) -> None:
+    """Rename pixel error files from _pixel_error_new.csv to _new_pixel_error.csv"""
+    pattern = os.path.join(directory, "*_pixel_error_new.csv")
+    for old_path in glob.glob(pattern):
+        new_path = old_path.replace("_pixel_error_new.csv", "_new_pixel_error.csv")
+        if os.path.exists(old_path):
+            shutil.move(old_path, new_path)
+            print(f"Renamed: {os.path.basename(old_path)} -> {os.path.basename(new_path)}")
 
 
 def add_variance_columns(column_structure):

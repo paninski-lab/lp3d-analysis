@@ -289,4 +289,45 @@ dataset_info = {
         'w3d': 150,  # scaling factor for crops
         'crop_size': (320, 320),  # (width, height)
     },
+
+    'ibl-mouse': {
+        # 'InD_animals': [
+        #     'CHC41_200705_105803',
+        #     'CHC41_200709_110253',
+        #     'CHC41_200723_110437',
+        #     'EMR30_200714_104454',
+        #     'EMR30_200720_110832',
+        #     'IND88_201218_112623',
+        #     'TRQ66_220728_132027',  # headstage
+        #     'TRQ177_200624_112234',
+        #     'TRQ177_200702_135920',
+        #     'TRQ177_200729_133912',
+        #     'TRQ177_210630_132311',  # headstage+wire
+        # ],
+        # 'OOD_animals': [
+        #     'PRL43_200617_131904',
+        #     'PRL43_200701_142147',
+        #     'SLV151_200728_132004',
+        #     'SLV151_200730_131948',
+        # ],
+        'cam_names': ['rightCamera','leftCamera'],
+        'keypoints': [
+            'pawL', 'pawR', 'nose',
+        ],
+        'skeleton': np.array([
+            [ 0,  1],
+            [ 1,  2],
+            [ 2,  0],
+        
+        ]),
+        'skeleton_colors': [
+            'red',
+            'blue',
+            'blue',
+        ],
+        'w3d': 0.15,  # scaling factor for crops
+        'crop_size': (256, 256),  # (width, height)
+    },
+
+
 }

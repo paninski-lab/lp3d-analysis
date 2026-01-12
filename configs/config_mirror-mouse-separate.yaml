@@ -98,8 +98,8 @@ training:
   patch_mask:
     init_step: 700
     final_step: 5000
-    init_ratio: 0.1
-    final_ratio: 0.5 # to disable patch masking set to 0.0 - in general keep 0.5
+    init_ratio: 0.0
+    final_ratio: 0.0 # to disable patch masking set to 0.0 - in general keep 0.5
 
 model:
   # list of unsupervised losses
@@ -111,11 +111,11 @@ model:
   # resnet50_animalpose_apose | resnet50_animal_ap10k
   # resnet50_human_jhmdb | resnet50_human_res_rle | resnet50_human_top_res
   # efficientnet_b0 | efficientnet_b1 | efficientnet_b2
-  backbone: vits_dino #resnet50_animal_ap10k #resnet50_animal_ap10k
+  backbone: vitb_dino #vits_dino #resnet50_animal_ap10k #resnet50_animal_ap10k
   # prediction mode - "heatmap" | "regression" | "heatmap_mhcrnn" | "heatmap_multiview" | "heatmap_multiview_transformer"
-  model_type: heatmap_multiview_transformer_mhcrnn  #heatmap_multiview_transformer
+  model_type: heatmap_multiview_transformer
   # head mode - "heatmap_cnn" | "feature_transformer" | "feature_transformer_learnable" | "feature_transformer_learnable_crossview"
-  head: heatmap_mhcrnn
+  head: heatmap_cnn
   # which heatmap loss to use
   # "mse" | "kl" | "js"
   heatmap_loss_type: mse

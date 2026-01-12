@@ -1,21 +1,23 @@
 #TODO 
 # ask Matt about adding the views variable to the config file so we can pick the views that we have and in that way instead of iterating over files we will iterate over views - which will determine things
 
-# dataset_name: chickadee-crop
+dataset_name: chickadee-crop
 # dataset_name: fly-anipose
 # dataset_name: mirror-mouse-separate
-dataset_name: ibl-mouse
+# dataset_name: ibl-mouse
 # dataset_name: rat7m-crop
 # dataset_name: human36m-crop
 
-lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_${dataset_name}.yaml
+lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_${dataset_name}_3_6.yaml
 
 # [needed?] pipeline seed for initial data split
 pipeline_seeds: 0
 
-outputs_dir: /teamspace/studios/this_studio/outputs/${dataset_name}
+# outputs_dir: /teamspace/studios/this_studio/outputs/${dataset_name}
+outputs_dir: /teamspace/efs_folders/ICLR26_Results/outputs/${dataset_name}
 
-intermediate_results_dir: test_200_MVT_3d_loss_heat_(0_1)
+intermediate_results_dir: test_200_MVT_3_6
+
 # initial training of an ensemble of networks
 train_networks:
   # run this section?
@@ -45,25 +47,24 @@ train_networks:
     # - semisupervised
     # - multiview_cnn
     # - multiview_transformer_learnable_crossview
-    # - multiview_transformer
-    - mvt_3d_loss
+    - multiview_transformer
+    # - mvt_3d_loss
     # - mvt_heatmap_3d_loss
     # - mvt_semisupervised
     # - multiview_transformer_mhcrnn
-    # - mvt_context
+    
     # think about adding multiview here 
   # run inference on videos in these directories (independent of training videos)
-  inference_dirs: []
+  inference_dirs:
     # - videos_new # OOD videos
     # - videos  # InD videos
     # - videos_fix
-    # - videos_new_fix # for chickadee
+    # - videos_new_fix
     # - videos-for-each-labeled-frame
-    # - videos_debug
+    - videos_debug
     # - videos_ind
     # - videos-for-each-labeled-frame
     # - videos_paper
-    # - videos_short
 
   # training parameters
   min_steps: 5000 # need 5000 I use 500 for testing 
@@ -81,7 +82,6 @@ post_processing_labels:
   eks_multiview:
     run: False
     overwrite: False
-    non_linear: True  # If True, uses nonlinear EKS with calibration files from data_dir/calibrations/{session}.toml. If False, uses linear EKS.
   ensemble_mean:
     run: False
     overwrite: False
@@ -102,9 +102,8 @@ post_processing_labeled_frames:
 post_processing_videos:
   eks_multiview:
     run: False
-    overwrite: True
-    n_latent: 6 # components for pca object - 6 for chickadee and 3 for fly and mouse 
-    non_linear: True  # If True, uses nonlinear EKS with calibration files from data_dir/calibrations/{session}.toml. If False, uses linear EKS.
+    overwrite: False
+    n_latent: 3 # components for pca object - 6 for chickadee and 3 for fly and mouse 
   eks_singleview:
     run: False
     overwrite: False

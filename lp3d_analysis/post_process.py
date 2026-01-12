@@ -1,4 +1,12 @@
 import os
+# Configure JAX memory settings before any JAX imports to prevent segmentation faults
+# These settings help prevent "Cannot allocate memory" errors during LLVM compilation
+os.environ.setdefault('XLA_PYTHON_CLIENT_PREALLOCATE', 'false')
+os.environ.setdefault('XLA_PYTHON_CLIENT_MEM_FRACTION', '0.5')
+xla_flags = os.environ.get('XLA_FLAGS', '')
+if '--xla_force_host_platform_device_count' not in xla_flags:
+    os.environ['XLA_FLAGS'] = f'{xla_flags} --xla_force_host_platform_device_count=1'.strip()
+
 import pandas as pd
 import numpy as np
 import pickle 
@@ -20,7 +28,7 @@ from lightning_pose.utils import io as io_utils
 from eks.singlecam_smoother import ensemble_kalman_smoother_singlecam, fit_eks_singlecam
 from eks.multicam_smoother import ensemble_kalman_smoother_multicam
 from eks.utils import convert_lp_dlc, format_data, make_dlc_pandas_index
-from eks.core import jax_ensemble
+from eks.core import ensemble
 from eks.marker_array import MarkerArray, input_dfs_to_markerArray
 
 from lp3d_analysis.utils import (
@@ -388,13 +396,13 @@ def process_ensemble_frames(
         stacked_arrays = np.stack(stacked_arrays, axis=-1)
         
         if mode in ['ensemble_mean', 'ensemble_median']:
-            # Process with jax_ensemble
+            # Process with ensemble
             stacked_arrays_reshaped = stacked_arrays.transpose(2, 0, 1)  # (5, 601, 90)
             stacked_arrays_reshaped = input_dfs_to_markerArray([stacked_dfs], keypoint_names, camera_names=[""])
             avg_mode = 'mean' if mode == 'ensemble_mean' else 'median'
             
 
-            ensemble_marker_array = jax_ensemble(
+            ensemble_marker_array = ensemble(
                 stacked_arrays_reshaped, 
                 avg_mode=avg_mode, 
                 var_mode='confidence_weighted_var',
@@ -491,6 +499,40 @@ def _get_bbox_path_fn(p: Path, results_dir: Path, data_dir: Path) -> Path:
     bbox_path = p_in_data_dir.with_stem(p.stem + "_bbox")
     return bbox_path
 
+
+def _get_eks_calibration_file(session_name_or_dir: str, data_dir: str, views: List[str]) -> Optional[str]:
+    """
+    Get the calibration TOML file path for a specific session.
+    
+    Args:
+        session_name_or_dir: Directory name or filename containing session name 
+                            (e.g., "PRL43_200617_131904_lBack" or "session_Cam-A.csv")
+        data_dir: Path to data directory
+        views: List of view names to remove from session name
+        
+    Returns:
+        Path to calibration TOML file, or None if not found
+    """
+    from lp3d_analysis.utils import extract_session_info, extract_sequence_name
+    
+    # If it's a directory name (no .csv extension), use extract_sequence_name
+    # Otherwise, use extract_session_info for filenames
+    if session_name_or_dir.endswith('.csv'):
+        # It's a filename - extract session name
+        session_name, _ = extract_session_info(session_name_or_dir, views)
+        base_session_name = session_name.replace('.short', '')
+    else:
+        # It's a directory name - extract sequence name (removes view and .short)
+        base_session_name = extract_sequence_name(session_name_or_dir, views)
+    
+    # Look for calibration file in data_dir/calibrations/{base_session_name}.toml
+    calib_path = Path(data_dir) / "calibrations" / f"{base_session_name}.toml"
+    
+    if calib_path.exists():
+        return str(calib_path)
+    
+    return None
+
 # def prepare_uncropped_csv_files(csv_files: list[str], get_bbox_path_fn: Callable[[Path, ], Path]):
 #     # Check if a bbox file exists
 #     # has_checked_bbox_file caches the file check
@@ -538,6 +580,7 @@ def process_multiview_directory(
     pca_object = None,
     fa_object = None,
     get_bbox_path_fn: Callable[[Path, ], Path] | None = None,
+    calibration: Optional[str] = None,
 ) -> None:
     """Process a multiview directory for EKS multiview mode"""
 
@@ -574,6 +617,20 @@ def process_multiview_directory(
 
     # Process each CSV file only once
     for csv_file in csv_files:
+        # Check if all output files already exist for this CSV file
+        all_outputs_exist = True
+        for view in views:
+            view_dir_name = original_dir.replace(curr_view, view)
+            view_output_dir = os.path.join(output_dir, view_dir_name)
+            result_file = os.path.join(view_output_dir, csv_file)
+            if not os.path.exists(result_file):
+                all_outputs_exist = False
+                break
+        
+        if all_outputs_exist:
+            print(f"Skipping {csv_file} - all output files already exist")
+            continue
+        
         print(f"Processing file: {csv_file}")
 
         all_pred_files = []
@@ -612,7 +669,8 @@ def process_multiview_directory(
                 views=views,
                 quantile_keep_pca=50, # this is for the labeled frames
                 pca_object=pca_object,
-                inflate_vars_kwargs=inflate_vars_kwargs
+                inflate_vars_kwargs=inflate_vars_kwargs,
+                calibration=calibration,
             )
             
             # Save results for each view
@@ -780,7 +838,8 @@ def post_process_ensemble_labels(
     inference_dirs: List[str],
     overwrite: bool,
     pca_object = None, 
-    fa_object = None
+    fa_object = None,
+    non_linear: bool = False,
 ) -> None:
     """Post-process ensemble labels"""
 
@@ -816,7 +875,6 @@ def post_process_ensemble_labels(
                 print(f"Loaded FA model from {fa_model_path} and the FA components shape: {fa_object.components_.shape} ")
             except Exception as e:
                 print(f"Could not load FA model: {e}")
-
 
     # Setup directories
     base_dir = os.path.dirname(results_dir)
@@ -870,13 +928,29 @@ def post_process_ensemble_labels(
                 
                 print(f"Processing sequence: {sequence_key} with {len(csv_files)} CSV files")
 
+                # Get calibration file for this sequence if non_linear is enabled
+                calibration_file = None
+                if non_linear:
+                    # Use the directory name (first_dir) to get session name, not the CSV filename
+                    # The directory name contains the actual session name (e.g., "PRL43_200617_131904_lBack")
+                    calibration_file = _get_eks_calibration_file(
+                        first_dir,  # Use directory name, not CSV filename
+                        cfg_lp.data.data_dir, 
+                        views
+                    )
+                    if calibration_file:
+                        print(f"[EKS] Using nonlinear EKS for sequence: {sequence_key}")
+                    else:
+                        print(f"[EKS] WARNING: nonlinear EKS requested but calibration file not found, falling back to linear EKS")
+
                 # Process this sequence only once
                 process_multiview_directory(
                     first_dir, csv_files, first_view, views, 
                     seed_dirs, inference_dir, output_dir, mode,
                     pca_object=pca_object,
                     fa_object=fa_object,
-                    get_bbox_path_fn=lambda p: _get_bbox_path_fn(p, Path(results_dir), Path(cfg_lp.data.data_dir))
+                    get_bbox_path_fn=lambda p: _get_bbox_path_fn(p, Path(results_dir), Path(cfg_lp.data.data_dir)),
+                    calibration=calibration_file,
                 )
             
             # Process final predictions for all views
@@ -928,6 +1002,7 @@ def post_process_ensemble_videos(
     mode: Literal['ensemble_mean', 'ensemble_median', 'eks_singleview', 'eks_multiview'],
     inference_dirs: List[str],
     overwrite: bool,
+    non_linear: bool = False,
 ) -> None:
     """Post-process ensemble videos"""
     # Setup directories
@@ -964,6 +1039,19 @@ def post_process_ensemble_videos(
                 # Process multiview case for videos
                 all_pred_files = []
 
+                # Get calibration file for this session if non_linear is enabled
+                calibration_file = None
+                if non_linear:
+                    calibration_file = _get_eks_calibration_file(
+                        first_view_session, 
+                        cfg_lp.data.data_dir, 
+                        views
+                    )
+                    if calibration_file:
+                        print(f"[EKS] Using nonlinear EKS for session: {first_view_session}")
+                    else:
+                        print(f"[EKS] WARNING: nonlinear EKS requested but calibration file not found, falling back to linear EKS")
+
                 # Collect files for all views and seeds
                 for view in views:
                     print(f"Processing view: {view}")
@@ -989,6 +1077,7 @@ def post_process_ensemble_videos(
                     markers_list=input_dfs_list,
                     keypoint_names=keypoint_names,
                     views=views,
+                    calibration=calibration_file,
                 )
 
                 # Save results for each view
@@ -1078,6 +1167,7 @@ def run_eks_multiview(
     inflate_vars_kwargs: dict = {},
     verbose: bool = False,
     pca_object = None,
+    calibration: Optional[str] = None,
 ) -> dict[str, pd.DataFrame]:
 
     """
@@ -1097,6 +1187,7 @@ def run_eks_multiview(
         avg_mode: Method for averaging across ensemble members. Default is 'median'.
         var_mode: Method for computing ensemble variance. Default is 'confidence_weighted_var'.
         verbose: Enable detailed progress output. Default is False.
+        calibration: Path to .toml calibration file for nonlinear EKS. If None, uses linear EKS.
 
     Returns:
         dict[str, pd.DataFrame]: Dictionary mapping view names to smoothed DataFrames containing
@@ -1108,6 +1199,16 @@ def run_eks_multiview(
     marker_array = input_dfs_to_markerArray(markers_list, keypoint_names, camera_names=views)
     # Uncomment this to skip eks for testing purposes:
     #return {view: markers_list[i][0] for i, view in enumerate(views)}
+
+    # Load calibration if provided for nonlinear EKS
+    camgroup = None
+    if calibration is not None:
+        from aniposelib.cameras import CameraGroup
+        try:
+            camgroup = CameraGroup.load(calibration)
+        except Exception as e:
+            print(f"[EKS] ERROR: Could not load calibration file, falling back to linear EKS")
+            camgroup = None
 
     # run the ensemble kalman smoother for multiview data
     camera_dfs, smooth_params_final = ensemble_kalman_smoother_multicam(
@@ -1124,6 +1225,7 @@ def run_eks_multiview(
         n_latent = 6,
         verbose = verbose,
         pca_object = pca_object,
+        camgroup = camgroup,
     )
 
 
