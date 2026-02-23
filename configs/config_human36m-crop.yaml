@@ -136,7 +136,7 @@ training:
   # batch size of labeled data during training
   train_batch_size: 8
   # batch size of labeled data during validation
-  val_batch_size: 48
+  val_batch_size: 16
   # batch size of labeled data during test
   test_batch_size: 48
   # fraction of labeled data used for training
@@ -183,7 +183,7 @@ training:
     init_step: 700
     final_step: 5000
     init_ratio: 0.0
-    final_ratio: 0.5
+    final_ratio: 0.0
 
 model:
   # list of unsupervised losses
@@ -249,12 +249,17 @@ losses:
     # (in prob; heatmaps with max prob values are removed)
     prob_threshold: 0.05
   
-  supervised_pairwise_projections:
-    # weight in front of pairwise projection loss
-    log_weight: 0.3
-    # absolute error (in pixels) below which pairwise projection loss is zeroed out; if not null, this
-    # parameter takes precedence over `empirical_epsilon_percentile`
-    epsilon: null
+  # supervised_pairwise_projections:
+  #   # weight in front of pairwise projection loss
+  #   log_weight: 0.3
+  #   # absolute error (in pixels) below which pairwise projection loss is zeroed out; if not null, this
+  #   # parameter takes precedence over `empirical_epsilon_percentile`
+  #   epsilon: null
+
+  # supervised_pairwise_projections:
+  #   log_weight: null
+  # supervised_reprojection_heatmap_mse:
+  #   log_weight: 1.0
 
 eval:
   # predict? used in scripts/train_hydra.py
@@ -292,4 +297,5 @@ callbacks:
     increase_factor: 0.01
     final_val: 1.0
     freeze_until_epoch: 0
+    # freeze_until_epoch: 24
 

@@ -246,12 +246,15 @@ losses:
     # (in prob; heatmaps with max prob values are removed)
     prob_threshold: 0.05
   
-  supervised_pairwise_projections:
-    # weight in front of pairwise projection loss
-    log_weight: 0.3
-    # absolute error (in pixels) below which pairwise projection loss is zeroed out; if not null, this
-    # parameter takes precedence over `empirical_epsilon_percentile`
-    epsilon: null
+  # supervised_pairwise_projections:
+  #   # weight in front of pairwise projection loss
+  #   log_weight: 0.3
+  #   # absolute error (in pixels) below which pairwise projection loss is zeroed out; if not null, this
+  #   # parameter takes precedence over `empirical_epsilon_percentile`
+  #   epsilon: null
+
+  supervised_reprojection_heatmap_mse:
+    log_weight: 1.0
 
 
 eval:

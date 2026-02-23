@@ -10,6 +10,7 @@ import cv2
 import imageio.v3 as iio
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 
 # def save_video(save_file, tmp_dir, framerate=20, frame_pattern='frame_%06d.jpeg', crf=23):
@@ -600,3 +601,286 @@ def create_video_grid(
         print(f"Video successfully created at {save_file}")
     except subprocess.CalledProcessError as e:
         print(f"Error occurred: {e}")
+
+
+
+def make_labeled_video(
+    save_file, caps, points, labels=None, likelihood_thresh=0.05,
+    max_frames=None, idxs=None, skeleton=None, leg_names=None,
+    colors={'rng=0': 'red', 'rng=1': 'red', 'rng=2': 'red',
+            'singleview': 'blue', 'multiview': 'blue'},
+    markers={'rng=0': 'o', 'rng=1': 'o', 'rng=2': 'o',
+             'singleview': 's', 'multiview': '^'},
+    colors_skeleton=None,linewidth_error =1.5, markersize=6, framerate=20, height=4, model_type=None,
+    hide_low_likelihood=False, keypoints_to_plot=None, resize_dims=[256, 256],
+):
+    
+    # Input validation
+    if not caps:
+        raise ValueError("No video captures provided")
+    if not points:
+        raise ValueError("No points data provided")
+    if not save_file:
+        raise ValueError("No save file path provided")
+
+    # tried to add for the case where we have the filled and not filled markers 
+    # Default marker styles if none provided
+    if markers is None:
+        markers = {model: 'o' for model in labels} if labels else {'default': 'o'}
+    
+        
+    # Setup temporary directory
+    tmp_dir = os.path.join(os.path.dirname(save_file), 'tmpZzZ')
+    if os.path.exists(tmp_dir):
+        shutil.rmtree(tmp_dir)
+    os.makedirs(tmp_dir)
+    print(f"Created temporary directory at: {tmp_dir}")
+
+    # Get view information
+    view_names = list(caps.keys())
+    n_views = len(view_names)
+    
+    # Pre-process frame dimensions and create scaled points
+    view_dimensions = {}
+    scaled_points = {}
+    
+    # # Calculate optimal grid layout
+    n_cols = int(np.ceil(np.sqrt(n_views)))
+    n_rows = int(np.ceil(n_views / n_cols))
+
+    print("Pre-processing frame dimensions and scaling markers...")
+    for view in view_names:
+        # Load frame 0 to get dimensions so we will use it later on 
+        frame = get_frames_from_idxs(caps[view], [0], resize=None)
+        if frame is None or frame.shape[0] == 0:
+            raise ValueError(f"Failed to read initial frame for view {view}")
+            
+        # Record original dimensions
+        h, w = frame.shape[2:4]  # Get height and width from frame dimensions
+        view_dimensions[view] = {'height': h, 'width': w}
+        
+        # Scale points for this view
+        if view in points:
+            scaled_points[view] = []
+            for point_dict in points[view]:
+                scaled_dict = {}
+                for marker_name, marker_vals in point_dict.items():
+                    # Create copy of marker values
+                    scaled_vals = marker_vals.copy()
+                    # Scale x and y coordinates
+                    scaled_vals[:, 0] = marker_vals[:, 0] * resize_dims[0] / w
+                    scaled_vals[:, 1] = marker_vals[:, 1] * resize_dims[1] / h
+                    # Scale uncertainty values if they exist
+                    if marker_vals.shape[1] > 3:
+                        scaled_vals[:, 3] = marker_vals[:, 3] * resize_dims[0] / w
+                        scaled_vals[:, 4] = marker_vals[:, 4] * resize_dims[1] / h
+                  
+                    scaled_dict[marker_name] = scaled_vals
+                scaled_points[view].append(scaled_dict)
+    
+    print("Frame dimensions:")
+    for view, dims in view_dimensions.items():
+        print(f"View {view}: {dims['width']}x{dims['height']}")
+    
+    # Create figure with calculated layout
+    h = height
+    w = h * (resize_dims[0] / resize_dims[1])
+
+    '''
+    This is for the type of video for the shape of the plots
+    '''
+    # fig, axes = plt.subplots(2, 1, figsize=(w, 2 * h))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols*w, n_rows*h))
+    axes = axes.flatten()
+    
+    # Configure axes
+    for idx in range(n_views, len(axes)):
+        axes[idx].set_visible(False)
+    for ax in axes[:n_views]:
+        ax.set_yticks([])
+        ax.set_xticks([])
+        ax.set_xlim([0, resize_dims[0]])
+        ax.set_ylim([resize_dims[1], 0])
+    plt.subplots_adjust(wspace=0, hspace=0, left=0, bottom=0, right=1, top=1)
+    
+    # Text properties remain the same
+    txt_kwargs = {
+        'fontsize': 6,
+        'horizontalalignment': 'left',
+        'verticalalignment': 'bottom',
+        'fontname': 'monospace',
+        'transform': axes[0].transAxes,
+    }
+    txt_fr_kwargs = {
+        'fontsize': 6,
+        'color': [1, 1, 1],
+        'horizontalalignment': 'left',
+        'verticalalignment': 'top',
+        'fontname': 'monospace',
+        'bbox': dict(facecolor='k', alpha=0.25, edgecolor='none'),
+        'transform': axes[0].transAxes
+    }
+    
+    # Main processing loop
+    frames_saved = 0
+    for i, idx in enumerate(idxs):
+        if i % 100 == 0:
+            print(f'Processing frame {i:03d}/{len(idxs):03d}')
+            
+        if max_frames is not None and i >= max_frames:
+            break
+            
+        for idx_view, view in enumerate(view_names):
+            ax = axes[idx_view]
+            ax.clear()
+            
+            # Read and process frame
+            frame = get_frames_from_idxs(caps[view], [idx], resize=None)
+            if frame is None or frame.shape[0] == 0:
+                print(f"Warning: Failed to read frame {idx} for view {view}")
+                continue
+                
+            # Resize frame
+            frame_resized = cv2.resize(frame[0, 0], (resize_dims[0], resize_dims[1]))
+            ax.imshow(frame_resized, vmin=0, vmax=255, cmap='gray')
+            
+            # Add view label
+            ax.text(0.02, 0.92, f'View {view}', color='white',
+                   bbox=dict(facecolor='k', alpha=0.25, edgecolor='none'),
+                   transform=ax.transAxes)
+
+            # Plot markers and skeleton using scaled points
+            if view in scaled_points:
+                for p, point_dict in enumerate(scaled_points[view]):
+                    label_name = labels[p] if labels is not None else f"Model {p}"
+                    
+                    # Plot markers
+                    for marker_name, marker_vals in point_dict.items():
+                        if keypoints_to_plot is not None and marker_name not in keypoints_to_plot:
+                            continue
+                            
+                        if idx >= len(marker_vals):
+                            print(f"Warning: Index {idx} out of bounds for marker {marker_name}")
+                            continue
+                            
+                        if marker_vals[idx, 2] < likelihood_thresh and hide_low_likelihood:
+                            continue
+
+                        # marker_color = colors.get(label_name, 'gray')
+                        marker_color = None
+                        if leg_names is not None:
+                            for leg_name in leg_names:
+                                if leg_name in marker_name:
+                                    marker_color = colors.get(leg_name)
+                                    break
+                        if marker_color is None:
+                            marker_color = colors.get(label_name, 'gray')
+                                
+                        marker_style = markers.get(label_name, 'o')
+                        
+                        # Use pre-scaled coordinates
+                        x, y = marker_vals[idx, 0], marker_vals[idx, 1]
+                        
+                        # Plot using exact marker style as provided
+                        face_color = "none" if marker_style == 'o' else marker_color
+                        ax.plot(
+                            x, y,
+                            marker_style,
+                            markersize=markersize,
+                            markerfacecolor=face_color,  # Always use the color
+                            markeredgecolor=marker_color,
+                            alpha=0.7 if marker_vals[idx, 2] < likelihood_thresh else 1.0
+                        )
+                        
+                        # Plot uncertainty if available
+                        if marker_vals.shape[1] > 3:
+                            # Use pre-scaled error bars
+                            xerr, yerr = marker_vals[idx, 3], marker_vals[idx, 4]
+                            
+                            # Horizontal error bar
+                            ax.plot([x - xerr, x + xerr], [y, y],
+                                  '-', color=marker_color, linewidth=linewidth_error)
+                            # Vertical error bar
+                            ax.plot([x, x], [y - yerr, y + yerr],
+                                  '-', color=marker_color, linewidth=linewidth_error)    
+                    
+                    # Plot skeleton
+                    if skeleton is not None:
+                        for s in skeleton:
+                            if (keypoints_to_plot is not None and 
+                                (s[0] not in keypoints_to_plot or s[1] not in keypoints_to_plot)):
+                                continue
+                                
+                            if (point_dict[s[0]][idx, 2] < likelihood_thresh or 
+                                point_dict[s[1]][idx, 2] < likelihood_thresh):
+                                continue
+                            
+                            # Use pre-scaled coordinates
+                            x0, y0 = point_dict[s[0]][idx, 0], point_dict[s[0]][idx, 1]
+                            x1, y1 = point_dict[s[1]][idx, 0], point_dict[s[1]][idx, 1]
+                            
+                            # Determine line color based on leg names
+                            line_color = None
+                            if leg_names is not None:
+                                # Check for leg identifiers in both keypoint names
+                                for leg_name in leg_names:
+                                    if leg_name in s[0] or leg_name in s[1]:
+                                        line_color = colors.get(leg_name)
+                                        break
+                            
+                            # Fall back to model color if no leg color is found
+                            if line_color is None:
+                                line_color = colors.get(label_name, 'gray')
+                                
+                            ax.plot([x0, x1], [y0, y1], '-', color=line_color)
+
+            if idx_view == 0 and labels is not None:
+                for p, label_name in enumerate(labels):
+                    label_color = colors.get(label_name, 'red') # will probably change this to gray because now we don't have the colors of each model 
+                    marker_style = markers.get(label_name, 'o')
+                    ax.text(0.04, 0.04 + p * 0.05, f'{label_name} ({marker_style})',
+                           color=label_color, **txt_kwargs)
+                    
+                           
+            # Add frame number to first view
+            if idx_view == 0:
+                ax.text(0.02, 0.98, f'frame {idx}', **txt_fr_kwargs)
+                # Add model name below frame number
+                model_txt_kwargs = txt_fr_kwargs.copy()
+                model_txt_kwargs['verticalalignment'] = 'top'
+                ax.text(0.02, 0.90, f'model: {model_type}', **model_txt_kwargs)
+
+            ax.set_yticks([])
+            ax.set_xticks([])
+            ax.set_xlim([0, resize_dims[0]])
+            ax.set_ylim([resize_dims[1], 0])
+        
+        # Save frame
+        save_path = os.path.join(tmp_dir, f'frame_{i:06d}.jpeg')
+        # save_path = os.path.join(tmp_dir, f'frame_{i:06d}.pdf')
+        try:
+            plt.savefig(save_path, dpi=300)
+            frames_saved += 1
+            if i < 5:
+                print(f"Saved frame: {save_path}")
+        except Exception as e:
+            print(f"Failed to save frame {i}: {str(e)}")
+    
+    print(f"Total frames saved: {frames_saved}")
+    
+    # Save video if frames were generated
+    if frames_saved > 0:
+        try:
+            save_video(save_file, tmp_dir, framerate=framerate)
+            print(f"Successfully saved video to: {save_file}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to save video: {str(e)}")
+    else:
+        raise RuntimeError("No frames were saved successfully")
+        
+    #Cleanup - tpmzzz folder to delete
+    try:
+        shutil.rmtree(tmp_dir)
+        print("Cleaned up temporary directory")
+    except Exception as e:
+        print(f"Warning: Failed to clean up temporary directory: {str(e)}")

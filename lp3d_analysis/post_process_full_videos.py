@@ -877,10 +877,11 @@ def run_eks_multiview(
     camera_dfs, smooth_params_final = ensemble_kalman_smoother_multicam(
         marker_array = marker_array,
         keypoint_names = keypoint_names,
-        smooth_param = 10000, #None,
+        smooth_param = None, # 10000, #None,
         quantile_keep_pca= quantile_keep_pca, 
         camera_names = views,
         s_frames = [(None,None)], # Keemin wil fix 
+        # s_frames = [(0,10000)], # used to have 10000 
         avg_mode = avg_mode,
         var_mode = var_mode,
         inflate_vars = True,

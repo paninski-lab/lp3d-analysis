@@ -328,6 +328,159 @@ dataset_info = {
         'w3d': 0.15,  # scaling factor for crops
         'crop_size': (256, 256),  # (width, height)
     },
+    'human36m': {
+        'cam_names': ["ca_01", "ca_02", "ca_03", "ca_04"],
+        'keypoints': [
+            "bottom_torso", "l_hip", "l_knee", "l_foot",
+            "r_hip", "r_knee", "r_foot", "center_torso",
+            "upper_torso", "neck_base", "center_head",
+            "r_shoulder", "r_elbow", "r_hand",
+            "l_shoulder", "l_elbow", "l_hand",
+        ],
+        'skeleton_names': np.array([
+            ("bottom_torso", "l_hip"), ("bottom_torso", "r_hip"),
+            ("l_hip", "l_knee"), ("l_knee", "l_foot"),
+            ("r_hip", "r_knee"), ("r_knee", "r_foot"),
+            ("bottom_torso", "center_torso"), ("center_torso", "upper_torso"),
+            ("upper_torso", "neck_base"), ("neck_base", "center_head"),
+            ("upper_torso", "r_shoulder"), ("r_shoulder", "r_elbow"), ("r_elbow", "r_hand"),
+            ("upper_torso", "l_shoulder"), ("l_shoulder", "l_elbow"), ("l_elbow", "l_hand"),
+        ]),
+        'skeleton': np.array([
+            [ 0,  1],
+            [ 1,  2],
+            [ 2,  0],
+            [ 3,  4],
+            [ 4,  5],
+            [ 5,  3],
+            [ 6,  7],
+            [ 7,  8],
+            [ 8,  6],
+            [ 9, 10],
+            [10, 11],
+            [11,  9],
+            [12, 13],
+            [13, 14],
+            [14, 12],
+            [15, 16],
+            [16, 17],
+            [17, 15],
+        
+        ]),
 
+        'skeleton_colors': [
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+        ],
+        # 'w3d': 0.15,  # scaling factor for crops
+        'crop_size': (240, 320),  # (width, height)
+    },
+
+    'two-mouse': {
+        'InD_animals': [
+            'CSDS-Day1-A_1-Defeat',
+            'CSDS-Day1-A_3-Defeat',
+            'CSDS-Day3-A_5-Defeat',
+            'CSDS-Day3-A_7-Defeat',
+            'CSDS-Day5-A_12-Defeat',
+            'CSDS-Day7-A_1-Defeat',
+            'CSDS-Day1-A_3-Defeat',
+            'CSDS-Day9-A_5-Defeat',
+            'CSDS-Day9-A_7-Defeat',
+        ],
+        'OOD_animals': [
+            'CSDS-Day5-A_11-Defeat',
+        ],
+        'cam_names': ['Camera0', 'Camera1', 'Camera2', 'Camera3', 'Camera4'],
+        'keypoints': [
+            'Nose_black',             # 0
+            'Ear_R_black',            # 1
+            'Ear_L_black',            # 2
+            'TTI_black',              # 3
+            'Head_black',             # 4
+            'Trunk_black',            # 5
+            'Shoulder_left_black',    # 6
+            'Shoulder_right_black',   # 7
+            'Haunch_left_black',      # 8
+            'Haunch_right_black',     # 9
+            'Neck_black',             # 10
+            'Nose_white',             # 11
+            'Ear_R_white',            # 12
+            'Ear_L_white',            # 13
+            'TTI_white',              # 14
+            'Head_white',             # 15
+            'Trunk_white',            # 16
+            'Shoulder_left_white',    # 17
+            'Shoulder_right_white',   # 18
+            'Haunch_left_white',      # 19
+            'Haunch_right_white',     # 20
+            'Neck_white',             # 21
+        ],
+        'skeleton': np.array([
+            [ 3,  5],
+            [ 3, 12],
+            [ 3, 13],
+            [ 3,  6],
+            [ 5,  0],
+            [ 5, 14],
+            [ 5, 10],
+            [ 5, 11],
+            [ 5,  1],
+            [ 5,  2],
+            [ 18,  20],
+            [ 18, 27],
+            [ 18, 28],
+            [ 18,  21],
+            [ 20,  15],
+            [ 20, 29],
+            [ 20, 25],
+            [ 20, 26],
+            [ 20,  16],
+            [ 20,  17],
+
+        ]),
+        'skeleton_colors': [
+            # the black mouse 
+            'pink',
+            'dodgerblue',
+            'dodgerblue',
+            'dodgerblue',
+            'red',
+            'red',
+            'red',
+            'red',
+            'red',
+            'red',
+            # the white mouse 
+            'deeppink',
+            'darkblue',
+            'darkblue',
+            'darkblue',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+            'darkred',
+        ],
+        'w3d': None,  # scaling factor for crops
+        'crop_size': None,  # (width, height)
+    },
 
 }

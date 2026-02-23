@@ -568,13 +568,32 @@ def parse_labeled_frames(image_paths: list[str], view_names: list[str]) -> dict[
 
 
 def extract_sequence_name(session_name: str, view_names: list[str]) -> str:
-    """Extract sequence name by removing view identifiers and .short suffix."""
-    parts = session_name.split('_')
-    # Remove view identifiers from the session name
+    """Extract base sequence name by removing view identifiers and suffixes.
+    
+    Handles multiple dataset naming patterns:
+    - IBL: _iblrig_leftCamera.downsampled.UUID -> _iblrig.downsampled.UUID
+    - Standard: session_viewName -> session
+    - Fly-anipose: date_fly_R#C#_Cam-A_rot-* -> date_fly_R#C#_rot-*
+    - Chickadee: BIRD_DATE_TIME_camera -> BIRD_DATE_TIME
+    - Mirror-mouse: date_session_view -> date_session
+    """
+    result = session_name
+    
+    # Remove .short suffix first
+    result = result.replace('.short', '')
+    
+    # Handle IBL-style: _iblrig_viewName.downsampled.UUID
+    for view in view_names:
+        ibl_pattern = f"_{view}.downsampled"
+        if ibl_pattern in result:
+            result = result.replace(ibl_pattern, ".downsampled")
+            return result
+    
+    # Handle standard patterns: split by underscore and remove view names
+    parts = result.split('_')
     sequence_parts = [p for p in parts if p not in view_names]
     result = '_'.join(sequence_parts)
-    # Remove .short suffix if present
-    result = result.replace('.short', '')
+    
     return result
 
 
@@ -635,9 +654,40 @@ def remap_keypoints_to_original_space(keypoints_2d: np.ndarray, bbox_data: dict,
     return remapped_keypoints
 
 
-def create_image_path(session_name: str, view_name: str, frame_number: int, view_names: list[str]) -> str:
-    """Create image path for a frame."""
+def create_image_path(
+    session_name: str, 
+    view_name: str, 
+    frame_number: int, 
+    view_names: list[str],
+    labeled_data_prefix: str = 'labeled_data',
+    image_ext: str = '.png'
+) -> str:
+    """Create image path for a frame.
+    
+    Handles different naming conventions:
+    - IBL style: _iblrig.downsampled.UUID -> _iblrig_viewName.downsampled.UUID
+    - Fly-anipose: base_rot-condition -> base_viewName_rot-condition
+    - Standard style: session_name -> session_name_viewName
+    
+    Args:
+        session_name: Base session name (without view)
+        view_name: Camera/view name to insert
+        frame_number: Frame number for the image filename
+        view_names: List of all view names (for reference)
+        labeled_data_prefix: Directory prefix ('labeled_data' or 'labeled-data')
+        image_ext: Image extension ('.png', '.jpg', etc.)
+    """
     clean_session_name = session_name.replace('.short', '')
+    
+    # Handle IBL-style naming: _iblrig.downsampled.UUID
+    # The view name should be inserted before .downsampled
+    if '.downsampled.' in clean_session_name:
+        prefix, suffix = clean_session_name.split('.downsampled.', 1)
+        dir_name = f"{prefix}_{view_name}.downsampled.{suffix}"
+        return f"{labeled_data_prefix}/{dir_name}/img{frame_number:08d}{image_ext}"
+    
+    # Handle condition-based naming (str-, rot-, sec patterns) - check BEFORE dot handling
+    # This handles fly-anipose style: 05272019_fly1_0_R1C24_rot-ccw-0.06_sec
     parts = clean_session_name.split('_')
     condition_start = next((i for i, p in enumerate(parts) 
                           if any(x in p for x in ['str-', 'rot-', 'sec'])), len(parts))
@@ -645,6 +695,221 @@ def create_image_path(session_name: str, view_name: str, frame_number: int, view
     if condition_start < len(parts):
         base_session = '_'.join(parts[:condition_start])
         condition = '_'.join(parts[condition_start:])
-        return f"labeled-data/{base_session}_{view_name}_{condition}/img{frame_number:08d}.png"
-    else:
-        return f"labeled-data/{clean_session_name}_{view_name}/img{frame_number:08d}.png"
+        return f"{labeled_data_prefix}/{base_session}_{view_name}_{condition}/img{frame_number:08d}{image_ext}"
+    
+    # Standard: append view at end
+    return f"{labeled_data_prefix}/{clean_session_name}_{view_name}/img{frame_number:08d}{image_ext}"
+
+
+def find_prediction_files(base_dir: str, view: str) -> List[str]:
+    """
+    Find all prediction files for a given view in a directory.
+    
+    Parameters:
+    -----------
+    base_dir : str
+        Base directory to search in
+    view : str
+        View name to match
+        
+    Returns:
+    --------
+    List[str]
+        List of matching file paths
+    """
+    if not os.path.exists(base_dir):
+        return []
+    
+    matching_files = []
+    
+    # Look for files that contain the view name
+    for file in os.listdir(base_dir):
+        if file.endswith('.csv') and view in file:
+            matching_files.append(os.path.join(base_dir, file))
+    
+    return sorted(matching_files)  # Sort for consistent ordering
+
+def extract_session_info(filename: str, views: List[str]) -> Tuple[str, str]:
+    """
+    Extract session name and view from filename.
+    """
+    name = filename.replace('.csv', '')
+    
+    # Find matching view name
+    view_name = next((view for view in views if view in name), name.split('_')[-1])
+    
+    # Remove view name to get session name
+    session_name = name.replace(f'_{view_name}', '')
+    
+    return session_name, view_name
+
+
+
+def generate_comprehensive_paths_multi_results(
+    dataset_name: str,
+    views: List[str],
+    results_configs: Union[List[str], Dict[str, Dict]],  # Now accepts configs per results dir
+    video_dirs: Union[str, List[str]],  # Now accepts single string or list of strings
+    seed_dirs: List[str],
+    ensemble_seed: str = None,
+    ensemble_methods: List[str] = None,
+    n_hand_labels: str = "200",
+    include_seeds: bool = True,
+    include_ensembles: bool = True,
+    base_path: str = "/teamspace/studios",
+    data_dir: str = "data",
+    studio_dir: str = "this_studio",
+    output_dir: str = "outputs",
+):
+    """
+    Generate comprehensive paths for multiple results directories with different model types.
+    
+    Parameters:
+    -----------
+    results_configs : Union[List[str], Dict[str, Dict]]
+        Either a list of results directory names (uses default model_type),
+        or a dict mapping results_dir -> {'model_type': str, 'n_hand_labels': str}
+    video_dirs : Union[str, List[str]]
+        Single video directory name or list of video directory names to search in
+    """
+    
+    # Convert video_dirs to list if it's a single string
+    if isinstance(video_dirs, str):
+        video_dirs = [video_dirs]
+    
+    # Convert simple list to config dict if needed
+    if isinstance(results_configs, list):
+        # Default model_type - you'll need to specify the correct one
+        default_model_type = "mvt_3d_loss"  
+        results_configs = {
+            results_dir: {'model_type': default_model_type, 'n_hand_labels': n_hand_labels}
+            for results_dir in results_configs
+        }
+    
+    # Ground truth paths (unchanged)
+    In_Dist_paths = {
+        view: os.path.join(base_path, data_dir, dataset_name, f'remapped_CollectedData_{view}.csv')
+        for view in views
+    }
+    
+    if not Path(In_Dist_paths[views[0]]).is_file():
+        In_Dist_paths = {
+            view: os.path.join(base_path, data_dir, dataset_name, f'CollectedData_{view}.csv')
+            for view in views
+        }
+    
+    Out_Dist_paths = {
+        view: os.path.join(base_path, data_dir, dataset_name, f'remapped_CollectedData_{view}_new.csv')
+        for view in views
+    }
+    
+    if not Path(Out_Dist_paths[views[0]]).is_file():
+        Out_Dist_paths = {
+            view: os.path.join(base_path, data_dir, dataset_name, f'CollectedData_{view}_new.csv')
+            for view in views
+        }
+    
+    # Initialize combined file paths structure
+    all_file_paths_combined = {}
+    
+    # Process each results directory with its specific config
+    for results_dir, config in results_configs.items():
+        model_type = config['model_type']
+        n_labels = config['n_hand_labels']
+        
+        print(f"\n=== Processing results directory: {results_dir} ===")
+        print(f"    Model type: {model_type}, Labels: {n_labels}")
+        
+        # Collect all prediction directories for this results_dir
+        all_prediction_dirs = []
+        
+        # Individual seed predictions (if requested)
+        if include_seeds and seed_dirs:
+            for seed in seed_dirs:
+                for video_dir in video_dirs:
+                    pred_dir = os.path.join(
+                        base_path, studio_dir, output_dir, dataset_name, results_dir,
+                        f"{model_type}_{n_labels}_{seed}", video_dir
+                    )
+                    print(f"  Checking seed dir: {pred_dir}")
+                    if os.path.exists(pred_dir):
+                        model_name = f"{results_dir}_seed_{seed}"
+                        all_prediction_dirs.append((model_name, pred_dir))
+                        print(f"    EXISTS: Added {model_name}")
+                    else:
+                        print(f"    NOT FOUND: {pred_dir}")
+        
+        # Ensemble predictions (if requested)
+        if include_ensembles and ensemble_methods and ensemble_seed:
+            for method in ensemble_methods:
+                for video_dir in video_dirs:
+                    pred_dir = os.path.join(
+                        base_path, studio_dir, output_dir, dataset_name, results_dir,
+                        f"{model_type}_{n_labels}_{ensemble_seed}", method, video_dir
+                    )
+                    print(f"  Checking ensemble dir: {pred_dir}")
+                    if os.path.exists(pred_dir):
+                        # Add _anipose suffix if video_dir contains _reprojected
+                        if "_reprojected" in video_dir:
+                            model_name = f"{results_dir}_{method}_anipose"
+                        else:
+                            model_name = f"{results_dir}_{method}"
+                        all_prediction_dirs.append((model_name, pred_dir))
+                        print(f"    EXISTS: Added {model_name}")
+                    else:
+                        print(f"    NOT FOUND: {pred_dir}")
+        
+        print(f"  Total directories found for {results_dir}: {len(all_prediction_dirs)}")
+        
+        if len(all_prediction_dirs) == 0:
+            print(f"  WARNING: No directories found for {results_dir}!")
+            continue
+        
+        # Process files from each prediction directory
+        for model_name, pred_dir in all_prediction_dirs:
+            print(f"  Processing {model_name}: {pred_dir}")
+            
+            # Find all CSV files
+            all_csvs = []
+            if os.path.exists(pred_dir):
+                all_csvs = [f for f in os.listdir(pred_dir) if f.endswith('.csv')]
+            
+            print(f"    Found {len(all_csvs)} CSV files")
+            
+            # Group files by session
+            for csv_file in all_csvs:
+                # Skip uncropped files
+                if '_uncropped' in csv_file:
+                    continue
+                    
+                full_path = os.path.join(pred_dir, csv_file)
+                
+                # Extract session name and view
+                session_name, view_name = extract_session_info(csv_file, views)
+                
+                # Verify this view is expected
+                if view_name not in views:
+                    continue
+                
+                if session_name and view_name:
+                    # Initialize nested dictionaries
+                    if session_name not in all_file_paths_combined:
+                        all_file_paths_combined[session_name] = {view: {} for view in views}
+                    
+                    # Store the file path
+                    all_file_paths_combined[session_name][view_name][model_name] = full_path
+                    print(f"      Added {session_name} -> {view_name} -> {model_name}")
+    
+    print(f"Total sessions found: {len(all_file_paths_combined)}")
+    
+    # Filter sessions with sufficient views
+    filtered_sessions = {}
+    for session_name, session_data in all_file_paths_combined.items():
+        valid_views = [v for v in views if session_data[v]]
+        if len(valid_views) >= 2:
+            filtered_sessions[session_name] = session_data
+            print(f"Keeping session '{session_name}' with {len(valid_views)} views")
+    
+    print(f"Final result: {len(filtered_sessions)} sessions with sufficient data")
+    
+    return In_Dist_paths, Out_Dist_paths, filtered_sessions

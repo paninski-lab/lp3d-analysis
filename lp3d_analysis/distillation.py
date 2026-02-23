@@ -107,28 +107,99 @@ class DistillationPipeline:
     def __init__(self, config: DistillationConfig):
         self.config = config
         self.views = config.view_names
+        
+        # Detect image format from existing data
+        self.image_ext = '.png'  # Default
+        self.labeled_data_prefix = 'labeled-data'  # Default
+        self._detect_existing_data_format()
+    
+    def _detect_existing_data_format(self):
+        """Detect image extension and path format from existing CollectedData files."""
+        if not self.config.existing_data_dir:
+            return
+        
+        # Try to read existing CollectedData to detect format
+        for view_name in self.views:
+            csv_path = Path(self.config.existing_data_dir) / f"CollectedData_{view_name}.csv"
+            if csv_path.exists():
+                try:
+                    df = pd.read_csv(csv_path, header=[0, 1, 2], index_col=0)
+                    if len(df) > 0:
+                        first_path = df.index[0]
+                        
+                        # Detect image extension
+                        if first_path.endswith('.jpg'):
+                            self.image_ext = '.jpg'
+                        elif first_path.endswith('.jpeg'):
+                            self.image_ext = '.jpeg'
+                        elif first_path.endswith('.png'):
+                            self.image_ext = '.png'
+                        
+                        # Detect labeled_data vs labeled-data prefix
+                        if first_path.startswith('labeled_data/'):
+                            self.labeled_data_prefix = 'labeled_data'
+                        elif first_path.startswith('labeled-data/'):
+                            self.labeled_data_prefix = 'labeled-data'
+                        
+                        logger.info(f"Detected existing data format: prefix='{self.labeled_data_prefix}', ext='{self.image_ext}'")
+                        return
+                except Exception as e:
+                    logger.debug(f"Could not read {csv_path}: {e}")
+        
+        logger.info(f"Using default format: prefix='{self.labeled_data_prefix}', ext='{self.image_ext}'")
     
     def load_eks_data(self) -> Dict:
-        """Load EKS data from CSV files."""
-        all_eks_data = {}
-        
+        """Load EKS data from CSV files with optional parallel processing."""
+        # Collect all files to process
+        files_to_process = []
         for filename in os.listdir(self.config.eks_results_dir):
             if not filename.endswith('.csv') or '_uncropped' in filename:
                 continue
-                
             session_name, view_name = extract_session_info(filename, self.views)
-            
-            if session_name not in all_eks_data:
-                all_eks_data[session_name] = {}
-            
             csv_path = os.path.join(self.config.eks_results_dir, filename)
-            all_eks_data[session_name][view_name] = self._process_csv_file(csv_path, session_name, view_name)
+            files_to_process.append((csv_path, session_name, view_name))
+        
+        logger.info(f"Loading {len(files_to_process)} CSV files...")
+        
+        # Try parallel processing for large datasets
+        all_eks_data = {}
+        if len(files_to_process) > 4:
+            try:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                
+                def process_file(args):
+                    csv_path, session_name, view_name = args
+                    return session_name, view_name, self._process_csv_file(csv_path, session_name, view_name)
+                
+                # Use threads (GIL released during pandas I/O)
+                with ThreadPoolExecutor(max_workers=min(8, len(files_to_process))) as executor:
+                    futures = {executor.submit(process_file, f): f for f in files_to_process}
+                    for future in as_completed(futures):
+                        session_name, view_name, data = future.result()
+                        if session_name not in all_eks_data:
+                            all_eks_data[session_name] = {}
+                        all_eks_data[session_name][view_name] = data
+                        
+            except Exception as e:
+                logger.debug(f"Parallel loading failed ({e}), falling back to sequential")
+                all_eks_data = self._load_eks_sequential(files_to_process)
+        else:
+            all_eks_data = self._load_eks_sequential(files_to_process)
         
         logger.info(f"Found {len(all_eks_data)} sessions with EKS data")
         return all_eks_data
     
+    def _load_eks_sequential(self, files_to_process: List[Tuple[str, str, str]]) -> Dict:
+        """Load EKS files sequentially."""
+        all_eks_data = {}
+        for csv_path, session_name, view_name in files_to_process:
+            if session_name not in all_eks_data:
+                all_eks_data[session_name] = {}
+            all_eks_data[session_name][view_name] = self._process_csv_file(csv_path, session_name, view_name)
+        return all_eks_data
+    
     def _process_csv_file(self, csv_path: str, session_name: str, view_name: str) -> Dict:
-        """Process a single CSV file."""
+        """Process a single CSV file using vectorized operations for speed."""
         df = pd.read_csv(csv_path, header=[0, 1, 2], index_col=0)
         df = io_utils.fix_empty_first_row(df)
         
@@ -140,18 +211,10 @@ class DistillationPipeline:
         keypoint_names = [col[1] for col in df.columns if col[2] in ['x', 'y']]
         keypoint_names = list(dict.fromkeys(keypoint_names))
         
-        # Process frames
-        smoothed_predictions = []
-        for array_idx in range(len(df)):
-            frame_data = df.iloc[array_idx]
-            actual_frame_number = df.index[array_idx]
-            
-            frame_bbox = bbox_data.loc[actual_frame_number] if bbox_data is not None and actual_frame_number in bbox_data.index else None
-            uncropped_frame = uncropped_df.loc[actual_frame_number] if uncropped_df is not None and actual_frame_number in uncropped_df.index else None
-            
-            smoothed_predictions.append(self._extract_frame_data(
-                frame_data, keypoint_names, actual_frame_number, array_idx, df.columns, frame_bbox, uncropped_frame
-            ))
+        # Use vectorized processing for speed
+        smoothed_predictions = self._process_csv_vectorized(
+            df, keypoint_names, bbox_data, uncropped_df
+        )
         
         return {
             'video_path': csv_path,
@@ -161,6 +224,85 @@ class DistillationPipeline:
             'has_bbox_data': bbox_data is not None,
             'has_uncropped_data': uncropped_df is not None
         }
+    
+    def _process_csv_vectorized(self, df: pd.DataFrame, keypoint_names: List[str],
+                                bbox_data: Optional[pd.DataFrame], 
+                                uncropped_df: Optional[pd.DataFrame]) -> List[Dict]:
+        """Process CSV data using vectorized numpy operations for speed."""
+        scorer = df.columns.levels[0][0]
+        n_frames = len(df)
+        n_keypoints = len(keypoint_names)
+        frame_indices = df.index.values
+        
+        # Pre-extract all coordinate columns as numpy arrays (vectorized)
+        keypoints_x = np.column_stack([df[(scorer, kp, 'x')].values for kp in keypoint_names])
+        keypoints_y = np.column_stack([df[(scorer, kp, 'y')].values for kp in keypoint_names])
+        keypoints_2d = np.stack([keypoints_x, keypoints_y], axis=-1)  # Shape: (n_frames, n_keypoints, 2)
+        
+        # Extract variances
+        var_x = np.column_stack([df[(scorer, kp, 'x_ens_var')].values for kp in keypoint_names])
+        var_y = np.column_stack([df[(scorer, kp, 'y_ens_var')].values for kp in keypoint_names])
+        
+        # Try to get posterior variances
+        try:
+            var_post_x = np.column_stack([df[(scorer, kp, 'x_posterior_var')].values for kp in keypoint_names])
+            var_post_y = np.column_stack([df[(scorer, kp, 'y_posterior_var')].values for kp in keypoint_names])
+            has_posterior = True
+        except KeyError:
+            var_post_x = var_post_y = None
+            has_posterior = False
+        
+        # Process uncropped data if available
+        uncropped_2d = uncropped_var_x = uncropped_var_y = None
+        uncropped_var_post_x = uncropped_var_post_y = None
+        if uncropped_df is not None:
+            try:
+                uncropped_x = np.column_stack([uncropped_df[(scorer, kp, 'x')].values for kp in keypoint_names])
+                uncropped_y = np.column_stack([uncropped_df[(scorer, kp, 'y')].values for kp in keypoint_names])
+                uncropped_2d = np.stack([uncropped_x, uncropped_y], axis=-1)
+                uncropped_var_x = np.column_stack([uncropped_df[(scorer, kp, 'x_ens_var')].values for kp in keypoint_names])
+                uncropped_var_y = np.column_stack([uncropped_df[(scorer, kp, 'y_ens_var')].values for kp in keypoint_names])
+                try:
+                    uncropped_var_post_x = np.column_stack([uncropped_df[(scorer, kp, 'x_posterior_var')].values for kp in keypoint_names])
+                    uncropped_var_post_y = np.column_stack([uncropped_df[(scorer, kp, 'y_posterior_var')].values for kp in keypoint_names])
+                except KeyError:
+                    pass
+            except KeyError:
+                uncropped_2d = keypoints_2d
+                uncropped_var_x = var_x
+                uncropped_var_y = var_y
+        
+        # Pre-process bbox data into a dict for fast lookup
+        bbox_dict = {}
+        if bbox_data is not None:
+            bbox_cols = bbox_data.columns.tolist()
+            for idx in bbox_data.index:
+                if idx in frame_indices:
+                    bbox_dict[idx] = {col: float(val) if pd.notna(val) else None 
+                                     for col, val in bbox_data.loc[idx].items()}
+        
+        # Build results list (still need a loop but with pre-computed arrays)
+        smoothed_predictions = []
+        for i in range(n_frames):
+            frame_idx = frame_indices[i]
+            result = {
+                'frame_idx': frame_idx,
+                'array_idx': i,
+                'keypoints_2d': keypoints_2d[i],
+                'variances_x': var_x[i],
+                'variances_y': var_y[i],
+                'variances_post_x': var_post_x[i] if has_posterior else None,
+                'variances_post_y': var_post_y[i] if has_posterior else None,
+                'keypoints_2d_uncropped': uncropped_2d[i] if uncropped_2d is not None else None,
+                'variances_x_uncropped': uncropped_var_x[i] if uncropped_var_x is not None else None,
+                'variances_y_uncropped': uncropped_var_y[i] if uncropped_var_y is not None else None,
+                'variances_post_x_uncropped': uncropped_var_post_x[i] if uncropped_var_post_x is not None else None,
+                'variances_post_y_uncropped': uncropped_var_post_y[i] if uncropped_var_post_y is not None else None,
+                'bbox_data': bbox_dict.get(frame_idx)
+            }
+            smoothed_predictions.append(result)
+        
+        return smoothed_predictions
     
     def _load_bbox_data(self, session_name: str, view_name: str) -> Optional[pd.DataFrame]:
         """Load bbox data if available."""
@@ -265,42 +407,61 @@ class DistillationPipeline:
         return eks_data
     
     def _perform_pca_3d_reconstruction(self, session_data: Dict) -> List[np.ndarray]:
-        """Perform PCA-based 3D reconstruction when camera parameters are not available."""
+        """Perform PCA-based 3D reconstruction when camera parameters are not available.
+        
+        Optimized to pre-extract all keypoints as arrays before PCA.
+        """
         first_view = next(view for view in self.views if view in session_data)
         num_frames = len(session_data[first_view]['smoothed_predictions'])
         num_keypoints = len(session_data[first_view]['keypoint_names'])
         
+        # Pre-extract all 2D keypoints for each view as arrays
+        view_keypoints = {}
+        for view_name in self.views:
+            if view_name not in session_data or 'smoothed_predictions' not in session_data[view_name]:
+                continue
+            
+            view_data = session_data[view_name]
+            predictions = view_data['smoothed_predictions']
+            has_bbox = view_data.get('has_bbox_data', False)
+            has_uncropped = view_data.get('has_uncropped_data', False)
+            
+            # Extract all keypoints for this view at once
+            keypoints_list = []
+            for frame_data in predictions:
+                bbox_data = frame_data.get('bbox_data', None)
+                
+                # Use uncropped keypoints if available
+                if (bbox_data is not None and has_bbox and has_uncropped and
+                    frame_data.get('keypoints_2d_uncropped') is not None):
+                    kp = frame_data['keypoints_2d_uncropped']
+                else:
+                    kp = frame_data['keypoints_2d']
+                    if bbox_data is not None and has_bbox:
+                        kp = remap_keypoints_to_original_space(kp, bbox_data)
+                
+                keypoints_list.append(kp)
+            
+            view_keypoints[view_name] = np.array(keypoints_list)  # Shape: (num_frames, num_keypoints, 2)
+        
+        # Perform PCA for all frames
         keypoints_3d_all_frames = []
+        nan_frame = np.full((num_keypoints, 3), np.nan)
         
         for frame_idx in range(num_frames):
-            keypoints_2d_all_views = []
-            
+            # Collect valid keypoints from all views for this frame
+            valid_views = []
             for view_name in self.views:
-                if (view_name in session_data and
-                    'smoothed_predictions' in session_data[view_name] and
-                    frame_idx < len(session_data[view_name]['smoothed_predictions'])):
-                    
-                    frame_data = session_data[view_name]['smoothed_predictions'][frame_idx]
-                    bbox_data = frame_data.get('bbox_data', None)
-                    
-                    # Use uncropped keypoints if available
-                    if (bbox_data is not None and 
-                        session_data[view_name].get('has_bbox_data', False) and
-                        session_data[view_name].get('has_uncropped_data', False) and
-                        frame_data.get('keypoints_2d_uncropped') is not None):
-                        keypoints_2d = frame_data['keypoints_2d_uncropped']
-                    else:
-                        keypoints_2d = frame_data['keypoints_2d']
-                        if bbox_data is not None and session_data[view_name].get('has_bbox_data', False):
-                            keypoints_2d = remap_keypoints_to_original_space(keypoints_2d, bbox_data)
-                    
-                    if not (np.any(np.isnan(keypoints_2d)) or np.any(np.isinf(keypoints_2d))):
-                        keypoints_2d_all_views.append(keypoints_2d)
+                if view_name not in view_keypoints:
+                    continue
+                kp = view_keypoints[view_name][frame_idx]
+                if not (np.any(np.isnan(kp)) or np.any(np.isinf(kp))):
+                    valid_views.append(kp)
             
             # Perform PCA if we have enough views
-            if len(keypoints_2d_all_views) >= 2:
+            if len(valid_views) >= 2:
                 try:
-                    keypoints_2d_stacked = np.stack(keypoints_2d_all_views, axis=1)
+                    keypoints_2d_stacked = np.stack(valid_views, axis=1)
                     keypoints_2d_flat = keypoints_2d_stacked.reshape(num_keypoints, -1)
                     
                     n_components = min(3, keypoints_2d_flat.shape[1])
@@ -314,57 +475,76 @@ class DistillationPipeline:
                     
                     keypoints_3d_all_frames.append(keypoints_3d)
                 except Exception as e:
-                    logger.warning(f"PCA reconstruction failed for frame {frame_idx}: {e}")
-                    keypoints_3d_all_frames.append(np.full((num_keypoints, 3), np.nan))
+                    logger.debug(f"PCA reconstruction failed for frame {frame_idx}: {e}")
+                    keypoints_3d_all_frames.append(nan_frame)
             else:
-                keypoints_3d_all_frames.append(np.full((num_keypoints, 3), np.nan))
+                keypoints_3d_all_frames.append(nan_frame)
         
         return keypoints_3d_all_frames
     
     def _perform_triangulation(self, session_data: Dict, camera_group) -> List[np.ndarray]:
-        """Perform triangulation to get 3D keypoints from 2D predictions."""
+        """Perform triangulation to get 3D keypoints from 2D predictions.
+        
+        Optimized to pre-extract all keypoints as arrays before triangulation.
+        """
         first_view = next(view for view in self.views if view in session_data)
         num_frames = len(session_data[first_view]['smoothed_predictions'])
         num_keypoints = len(session_data[first_view]['keypoint_names'])
         
+        # Pre-extract all 2D keypoints for each view as arrays
+        view_keypoints = {}
+        for view_name in self.views:
+            if view_name not in session_data or 'smoothed_predictions' not in session_data[view_name]:
+                continue
+            
+            view_data = session_data[view_name]
+            predictions = view_data['smoothed_predictions']
+            has_bbox = view_data.get('has_bbox_data', False)
+            has_uncropped = view_data.get('has_uncropped_data', False)
+            
+            # Extract all keypoints for this view at once
+            keypoints_list = []
+            for frame_data in predictions:
+                bbox_data = frame_data.get('bbox_data', None)
+                
+                # Use uncropped keypoints if available
+                if (bbox_data is not None and has_bbox and has_uncropped and
+                    frame_data.get('keypoints_2d_uncropped') is not None):
+                    kp = frame_data['keypoints_2d_uncropped']
+                else:
+                    kp = frame_data['keypoints_2d']
+                    if bbox_data is not None and has_bbox:
+                        kp = remap_keypoints_to_original_space(kp, bbox_data)
+                
+                keypoints_list.append(kp)
+            
+            view_keypoints[view_name] = np.array(keypoints_list)  # Shape: (num_frames, num_keypoints, 2)
+        
+        # Perform triangulation for all frames
         keypoints_3d_all_frames = []
+        nan_frame = np.full((num_keypoints, 3), np.nan)
         
         for frame_idx in range(num_frames):
-            keypoints_2d_all_views = []
-            
+            # Collect valid keypoints from all views for this frame
+            valid_views = []
             for view_name in self.views:
-                if (view_name in session_data and
-                    'smoothed_predictions' in session_data[view_name] and
-                    frame_idx < len(session_data[view_name]['smoothed_predictions'])):
-                    
-                    frame_data = session_data[view_name]['smoothed_predictions'][frame_idx]
-                    bbox_data = frame_data.get('bbox_data', None)
-                    
-                    # Use uncropped keypoints if available
-                    if (bbox_data is not None and 
-                        session_data[view_name].get('has_bbox_data', False) and
-                        session_data[view_name].get('has_uncropped_data', False) and
-                        frame_data.get('keypoints_2d_uncropped') is not None):
-                        keypoints_2d = frame_data['keypoints_2d_uncropped']
-                    else:
-                        keypoints_2d = frame_data['keypoints_2d']
-                        if bbox_data is not None and session_data[view_name].get('has_bbox_data', False):
-                            keypoints_2d = remap_keypoints_to_original_space(keypoints_2d, bbox_data)
-                    
-                    if not (np.any(np.isnan(keypoints_2d)) or np.any(np.isinf(keypoints_2d))):
-                        keypoints_2d_all_views.append(keypoints_2d)
+                if view_name not in view_keypoints:
+                    continue
+                kp = view_keypoints[view_name][frame_idx]
+                if not (np.any(np.isnan(kp)) or np.any(np.isinf(kp))):
+                    valid_views.append(kp)
             
-            # Perform triangulation if we have enough views
-            if len(keypoints_2d_all_views) >= 2:
+            # Triangulate if we have enough views
+            if len(valid_views) >= 2:
                 try:
-                    keypoints_2d_stacked = np.stack(keypoints_2d_all_views)
+                    keypoints_2d_stacked = np.stack(valid_views)
                     keypoints_3d = camera_group.triangulate_fast(keypoints_2d_stacked, undistort=True)
                     keypoints_3d_all_frames.append(keypoints_3d)
                 except Exception as e:
-                    logger.warning(f"Triangulation failed for frame {frame_idx}: {e}")
-                    keypoints_3d_all_frames.append(np.full((num_keypoints, 3), np.nan))
+                    logger.debug(f"Triangulation failed for frame {frame_idx}: {e}")
+                    keypoints_3d_all_frames.append(nan_frame)
             else:
-                keypoints_3d_all_frames.append(np.full((num_keypoints, 3), np.nan))
+                keypoints_3d_all_frames.append(nan_frame)
         
         return keypoints_3d_all_frames
     
@@ -726,7 +906,11 @@ class DistillationPipeline:
                 bbox_data = frame_data.get('bbox_data')
                 
                 if bbox_data is not None:
-                    img_path = create_image_path(session_name, view_name, original_frame, self.views)
+                    img_path = create_image_path(
+                        session_name, view_name, original_frame, self.views,
+                        labeled_data_prefix=self.labeled_data_prefix,
+                        image_ext=self.image_ext
+                    )
                     bbox_row = bbox_data.copy()
                     bbox_row['image_path'] = img_path
                     bbox_data_list.append(bbox_row)
@@ -810,7 +994,7 @@ class DistillationPipeline:
                 extraction_info[cluster_idx] = {
                     'session_name': frame_info['session_name'],
                     'original_frame_number': int(original_frame),
-                    'img_filename': f"img{original_frame:08d}.png",
+                    'img_filename': f"img{original_frame:08d}{self.image_ext}",
                     'video_frame_number': int(original_frame),
                     'data_type': 'pseudo_labeled'
                 }
@@ -820,7 +1004,8 @@ class DistillationPipeline:
         """Parse frame information from image path."""
         import re
         img_filename = img_path.split('/')[-1]
-        frame_match = re.search(r'img(\d+)\.png', img_filename)
+        # Match any image extension (.png, .jpg, .jpeg)
+        frame_match = re.search(r'img(\d+)\.(png|jpg|jpeg)', img_filename)
         
         if frame_match:
             frame_number = int(frame_match.group(1))
@@ -912,8 +1097,12 @@ class DistillationPipeline:
             # Use cropped keypoints for final output
             keypoints_2d = frame_data['keypoints_2d']
             
-            # Create image path
-            img_path = create_image_path(session_name, view_name, original_frame, self.views)
+            # Create image path using detected format from existing data
+            img_path = create_image_path(
+                session_name, view_name, original_frame, self.views,
+                labeled_data_prefix=self.labeled_data_prefix,
+                image_ext=self.image_ext
+            )
             
             # Create row data using cropped keypoints
             row_data = {}
@@ -926,7 +1115,11 @@ class DistillationPipeline:
         return pseudo_rows
     
     def _generate_calibrations_file(self, pseudo_data: Dict, existing_data: Optional[Dict], output_dir: Path):
-        """Generate calibrations.csv file only if calibration files exist."""
+        """Generate calibrations.csv file that matches the CollectedData CSV paths exactly.
+        
+        The calibrations.csv must have the same image filenames as CollectedData
+        so that lightning-pose can match them correctly (it matches by filename only).
+        """
         logger.info("Generating calibrations.csv...")
         
         # Check if any calibration files exist
@@ -935,38 +1128,43 @@ class DistillationPipeline:
             logger.info("No calibration files found - skipping calibrations.csv generation")
             return
         
+        # Build a lookup of available calibration files (without .toml extension)
+        calib_files = {f.replace('.toml', ''): f for f in os.listdir(calib_dir) if f.endswith('.toml')}
+        logger.info(f"Found {len(calib_files)} calibration files")
+        
+        # Read the generated CollectedData CSV to get exact image paths
+        collected_data_path = output_dir / f"CollectedData_{self.views[0]}.csv"
+        if not collected_data_path.exists():
+            logger.warning(f"CollectedData CSV not found at {collected_data_path}")
+            return
+        
+        try:
+            collected_df = pd.read_csv(collected_data_path, header=[0, 1, 2], index_col=0)
+        except Exception as e:
+            logger.error(f"Failed to read CollectedData CSV: {e}")
+            return
+        
         mappings = []
         
-        # Add existing calibrations
-        if existing_data:
-            existing_df = existing_data.get(self.views[0], {}).get('data', pd.DataFrame())
-            if not existing_df.empty:
-                for img_path in existing_df.index:
-                    session_dir = img_path.split('/')[-2]
-                    session_name = extract_sequence_name(session_dir, self.views)
-                    
-                    # Only add if calibration file exists
-                    calib_file = calib_dir / f"{session_name}.toml"
-                    if calib_file.exists():
-                        mappings.append({
-                            '': img_path, 
-                            'file': f"calibrations/{session_name}.toml"
-                        })
-        
-        # Add pseudo-labeled calibrations
-        for frame_info in pseudo_data['selected_frames'].values():
-            original_frame = frame_info.get('original_frame_number', frame_info.get('original_frame_idx'))
-            if original_frame is not None:
-                session_name = frame_info['session_name']
-                
-                # Only add if calibration file exists
-                calib_file = calib_dir / f"{session_name}.toml"
-                if calib_file.exists():
-                    img_path = create_image_path(session_name, self.views[0], original_frame, self.views)
-                    mappings.append({
-                        '': img_path,
-                        'file': f"calibrations/{session_name}.toml"
-                    })
+        # For each image path in CollectedData, find the corresponding calibration file
+        for img_path in collected_df.index:
+            # Extract session directory from path
+            session_dir = img_path.split('/')[-2]
+            
+            # Extract base session name by removing view name (for calibration file lookup)
+            # Handle IBL-style: _iblrig_rightCamera.downsampled.UUID -> _iblrig.downsampled.UUID
+            session_name = session_dir
+            for view in self.views:
+                # Remove view name whether it's separated by _ or followed by .
+                session_name = session_name.replace(f'_{view}.', '.').replace(f'_{view}', '').replace(f'{view}_', '')
+            
+            # Find matching calibration file
+            # IMPORTANT: Use the original img_path from CollectedData to ensure exact match
+            if session_name in calib_files:
+                mappings.append({
+                    '': img_path,  # Use exact path from CollectedData
+                    'file': f"calibrations/{calib_files[session_name]}"
+                })
         
         # Create DataFrame and save only if we have mappings
         if mappings:
@@ -978,7 +1176,7 @@ class DistillationPipeline:
             
             logger.info(f"Generated calibrations.csv with {len(df)} mappings")
         else:
-            logger.info("No valid calibration mappings found - skipping calibrations.csv generation")
+            logger.warning("No valid calibration mappings found - check that calibration file names match session names")
     
     def _print_summary(self, extraction_info: Dict):
         """Print summary of extraction info."""
@@ -1073,6 +1271,17 @@ class DistillationPipeline:
         copied_count = 0
         failed_count = 0
         
+        # Determine source labeled data directory (could be labeled_data or labeled-data)
+        source_labeled_dir = None
+        for labeled_dir in ['labeled_data', 'labeled-data']:
+            if (source_data_dir / labeled_dir).exists():
+                source_labeled_dir = source_data_dir / labeled_dir
+                break
+        
+        if not source_labeled_dir:
+            logger.warning("No labeled data directory found in source")
+            return
+        
         # Copy frames from each view's _new.csv file
         for view_name in self.views:
             new_csv_file = source_data_dir / f"CollectedData_{view_name}_new.csv"
@@ -1086,8 +1295,16 @@ class DistillationPipeline:
                 logger.info(f"Found {len(df)} frames in {new_csv_file.name} to copy")
                 
                 for img_path in df.index:
-                    source_img_path = source_data_dir / "labeled-data" / img_path
-                    dest_img_path = output_dir / "labeled-data" / img_path
+                    # Handle both labeled_data/ and labeled-data/ prefixes in paths
+                    # Strip the prefix from img_path and use actual source directory
+                    img_path_stripped = img_path
+                    for prefix in ['labeled_data/', 'labeled-data/']:
+                        if img_path.startswith(prefix):
+                            img_path_stripped = img_path[len(prefix):]
+                            break
+                    
+                    source_img_path = source_labeled_dir / img_path_stripped
+                    dest_img_path = output_dir / self.labeled_data_prefix / img_path_stripped
                     
                     if source_img_path.exists():
                         try:
@@ -1099,6 +1316,9 @@ class DistillationPipeline:
                         except Exception as e:
                             logger.warning(f"Failed to copy frame {img_path}: {e}")
                             failed_count += 1
+                    else:
+                        logger.debug(f"Source frame not found: {source_img_path}")
+                        failed_count += 1
                 
             except Exception as e:
                 logger.error(f"Error processing {new_csv_file.name}: {e}")
@@ -1237,15 +1457,24 @@ class DistillationPipeline:
         clean_session = session_name.replace('.short', '')
         source_patterns = self._generate_video_patterns(clean_session, view_name)
         
+        # Try both labeled_data and labeled-data directory names
+        labeled_data_dirs = ['labeled_data', 'labeled-data']
+        
         source_dir = None
-        for pattern in source_patterns:
-            potential_source = Path(self.config.existing_data_dir) / "labeled-data" / pattern
-            if potential_source.exists():
-                source_dir = potential_source
+        for labeled_dir in labeled_data_dirs:
+            for pattern in source_patterns:
+                potential_source = Path(self.config.existing_data_dir) / labeled_dir / pattern
+                if potential_source.exists():
+                    source_dir = potential_source
+                    break
+            if source_dir:
                 break
         
         if not source_dir:
+            logger.warning(f"No source directory found for {session_name}_{view_name}. Tried patterns: {source_patterns[:5]}...")
             return 0
+        
+        logger.debug(f"Found source directory: {source_dir}")
         
         output_dir = self._get_output_dir(session_name, view_name)
         
@@ -1271,7 +1500,7 @@ class DistillationPipeline:
         return success_count
     
     def _extract_frames_from_video(self, session_name: str, view_name: str, frame_list: List[Tuple[int, str]]) -> int:
-        """Extract frames from video (fallback method)."""
+        """Extract frames from video using batch extraction for speed."""
         video_path = self._find_video_for_view(session_name, view_name)
         if not video_path:
             logger.warning(f"No video found for {session_name}_{view_name}, skipping frame extraction")
@@ -1279,12 +1508,193 @@ class DistillationPipeline:
         
         output_dir = self._get_output_dir(session_name, view_name)
         output_dir.mkdir(parents=True, exist_ok=True)
-        success_count = 0
         
+        # Filter out frames that already exist
+        frames_to_extract = []
         for frame_number, img_filename in frame_list:
             output_path = output_dir / img_filename
-            if self._extract_single_frame(video_path, frame_number, output_path):
+            if not output_path.exists():
+                frames_to_extract.append((frame_number, img_filename))
+        
+        already_exist = len(frame_list) - len(frames_to_extract)
+        
+        if not frames_to_extract:
+            return len(frame_list)
+        
+        # Use batch extraction (much faster than single-frame FFmpeg calls)
+        success_count = self._extract_frames_batch(video_path, output_dir, frames_to_extract)
+        
+        return success_count + already_exist
+    
+    def _extract_frames_batch(self, video_path: str, output_dir: Path, frame_list: List[Tuple[int, str]]) -> int:
+        """
+        Batch extract frames from video using OpenCV for speed.
+        
+        This is much faster than calling FFmpeg per frame because:
+        1. Single video open/close
+        2. Direct frame seeking with cv2
+        3. No subprocess overhead
+        """
+        try:
+            import cv2
+        except ImportError:
+            logger.warning("OpenCV not available, falling back to FFmpeg (slower)")
+            return self._extract_frames_batch_ffmpeg(video_path, output_dir, frame_list)
+        
+        success_count = 0
+        
+        try:
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                logger.error(f"Failed to open video: {video_path}")
+                return self._extract_frames_batch_ffmpeg(video_path, output_dir, frame_list)
+            
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            
+            # Sort frames by frame number for sequential access (faster seeking)
+            sorted_frames = sorted(frame_list, key=lambda x: x[0])
+            
+            for frame_number, img_filename in sorted_frames:
+                if frame_number >= total_frames:
+                    logger.warning(f"Frame {frame_number} exceeds video length {total_frames}")
+                    continue
+                
+                # Seek to frame
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+                ret, frame = cap.read()
+                
+                if ret and frame is not None:
+                    output_path = output_dir / img_filename
+                    # Convert BGR to RGB and save
+                    cv2.imwrite(str(output_path), frame)
+                    if output_path.exists():
+                        success_count += 1
+                else:
+                    logger.debug(f"Failed to read frame {frame_number} from {video_path}")
+            
+            cap.release()
+            
+        except Exception as e:
+            logger.error(f"OpenCV extraction failed: {e}, falling back to FFmpeg")
+            return self._extract_frames_batch_ffmpeg(video_path, output_dir, frame_list)
+        
+        return success_count
+    
+    def _extract_frames_batch_ffmpeg(self, video_path: str, output_dir: Path, frame_list: List[Tuple[int, str]]) -> int:
+        """
+        Batch extract frames using a single FFmpeg call with select filter.
+        
+        This is faster than individual FFmpeg calls but slower than OpenCV.
+        """
+        if not frame_list:
+            return 0
+        
+        # Build select filter for all frames at once
+        frame_numbers = [f[0] for f in frame_list]
+        frame_filenames = {f[0]: f[1] for f in frame_list}
+        
+        # Sort for efficient extraction
+        sorted_frame_numbers = sorted(frame_numbers)
+        
+        # For very large frame lists, use the sequential approach with seeking
+        if len(sorted_frame_numbers) > 100:
+            # Use FFmpeg with frame seeking (faster for sparse frames)
+            return self._extract_frames_ffmpeg_seek(video_path, output_dir, frame_list)
+        
+        # Build select expression: select='eq(n,1)+eq(n,5)+eq(n,10)'
+        select_expr = '+'.join([f'eq(n\\,{n})' for n in sorted_frame_numbers])
+        
+        # Determine output format from target filenames
+        sample_filename = frame_filenames[sorted_frame_numbers[0]]
+        target_ext = os.path.splitext(sample_filename)[1] or '.png'
+        
+        # Create a temporary directory for sequential output
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            
+            cmd = [
+                'ffmpeg', '-i', video_path,
+                '-vf', f"select='{select_expr}'",
+                '-vsync', 'vfr',
+                '-frame_pts', '1',
+                str(tmp_path / f'frame_%d{target_ext}'),
+                '-y', '-hide_banner', '-loglevel', 'error'
+            ]
+            
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                
+                if result.returncode != 0:
+                    logger.debug(f"FFmpeg batch failed: {result.stderr}")
+                    return self._extract_frames_ffmpeg_seek(video_path, output_dir, frame_list)
+                
+                # Map extracted frames to correct filenames
+                success_count = 0
+                for idx, frame_num in enumerate(sorted_frame_numbers, 1):
+                    tmp_frame = tmp_path / f'frame_{idx}{target_ext}'
+                    if tmp_frame.exists():
+                        target_filename = frame_filenames[frame_num]
+                        target_path = output_dir / target_filename
+                        shutil.move(str(tmp_frame), str(target_path))
+                        success_count += 1
+                
+                return success_count
+                
+            except subprocess.TimeoutExpired:
+                logger.warning("FFmpeg batch extraction timed out")
+                return self._extract_frames_ffmpeg_seek(video_path, output_dir, frame_list)
+            except Exception as e:
+                logger.warning(f"FFmpeg batch extraction failed: {e}")
+                return self._extract_frames_ffmpeg_seek(video_path, output_dir, frame_list)
+    
+    def _extract_frames_ffmpeg_seek(self, video_path: str, output_dir: Path, frame_list: List[Tuple[int, str]]) -> int:
+        """
+        Extract frames using FFmpeg with timestamp seeking (faster than select filter for sparse frames).
+        """
+        success_count = 0
+        
+        # Get video FPS for timestamp calculation
+        try:
+            probe_cmd = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', 
+                        '-show_entries', 'stream=r_frame_rate', '-of', 'csv=p=0', video_path]
+            result = subprocess.run(probe_cmd, capture_output=True, text=True)
+            fps_str = result.stdout.strip()
+            if '/' in fps_str:
+                num, den = fps_str.split('/')
+                fps = float(num) / float(den)
+            else:
+                fps = float(fps_str)
+        except:
+            fps = 30.0  # Default fallback
+        
+        # Sort frames for sequential access
+        sorted_frames = sorted(frame_list, key=lambda x: x[0])
+        
+        for frame_number, img_filename in sorted_frames:
+            output_path = output_dir / img_filename
+            if output_path.exists():
                 success_count += 1
+                continue
+            
+            # Calculate timestamp
+            timestamp = frame_number / fps
+            
+            cmd = [
+                'ffmpeg',
+                '-ss', f'{timestamp:.6f}',  # Seek before input (fast)
+                '-i', video_path,
+                '-vframes', '1',
+                '-y', '-hide_banner', '-loglevel', 'error',
+                str(output_path)
+            ]
+            
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                if result.returncode == 0 and output_path.exists():
+                    success_count += 1
+            except:
+                pass
         
         return success_count
     
@@ -1300,6 +1710,7 @@ class DistillationPipeline:
             for ext in self.config.video_extensions:
                 video_path = Path(self.config.video_base_dir) / f"{pattern}{ext}"
                 if video_path.exists():
+                    logger.debug(f"Found video: {video_path}")
                     return str(video_path)
         
         # Try alternative directories
@@ -1310,66 +1721,115 @@ class DistillationPipeline:
                     for ext in self.config.video_extensions:
                         video_path = video_dir_path / f"{pattern}{ext}"
                         if video_path.exists():
+                            logger.debug(f"Found video: {video_path}")
                             return str(video_path)
+        
+        # Log attempted patterns for debugging
+        logger.debug(f"No video found for session={clean_session}, view={view_name}. Tried patterns: {patterns[:5]}...")
         
         return ""
     
     def _generate_video_patterns(self, session_name: str, view_name: str) -> List[str]:
-        """Generate all possible video filename patterns dynamically."""
+        """Generate possible directory/video name patterns for a session and view.
+        
+        Handles multiple dataset naming conventions:
+        - IBL: _iblrig.downsampled.UUID -> _iblrig_viewName.downsampled.UUID
+        - Standard: session -> session_viewName
+        - Fly-anipose: date_fly_R#C#_rot-* -> date_fly_R#C#_Cam-X_rot-*
+        """
         patterns = []
+        clean_session = session_name.replace('.short', '')
         
-        # Split session name into parts
-        parts = session_name.split('_')
+        # 1. IBL-style: insert view before .downsampled
+        if '.downsampled.' in clean_session:
+            prefix, suffix = clean_session.split('.downsampled.', 1)
+            patterns.append(f"{prefix}_{view_name}.downsampled.{suffix}")
         
-        # Generate patterns by inserting view_name at different positions
+        # 2. Standard: append view at end
+        patterns.append(f"{clean_session}_{view_name}")
+        
+        # 3. Fly-anipose style: insert view before condition (rot-*, sec, etc.)
+        parts = clean_session.split('_')
+        condition_idx = next((i for i, p in enumerate(parts) 
+                             if any(c in p for c in ['rot-', 'sec', 'str-'])), len(parts))
+        if condition_idx < len(parts):
+            new_parts = parts[:condition_idx] + [view_name] + parts[condition_idx:]
+            patterns.append('_'.join(new_parts))
+        
+        # 4. Try inserting view at each position
         for i in range(len(parts) + 1):
-            # Insert view_name at position i
             new_parts = parts[:i] + [view_name] + parts[i:]
-            pattern = '_'.join(new_parts)
-            patterns.append(pattern)
-            patterns.append(f"{pattern}.short")
+            patterns.append('_'.join(new_parts))
         
-        # Also try replacing any existing view names with the target view
-        for i, part in enumerate(parts):
-            if part in self.views:
-                new_parts = parts.copy()
-                new_parts[i] = view_name
-                pattern = '_'.join(new_parts)
-                patterns.append(pattern)
-                patterns.append(f"{pattern}.short")
-        
-        # Try appending view_name to the end
-        patterns.append(f"{session_name}_{view_name}")
-        patterns.append(f"{session_name}_{view_name}.short")
-        
-        # Remove duplicates while preserving order
+        # Add .short variants and deduplicate
+        all_patterns = []
         seen = set()
-        unique_patterns = []
-        for pattern in patterns:
-            if pattern not in seen:
-                seen.add(pattern)
-                unique_patterns.append(pattern)
+        for p in patterns:
+            for variant in [p, f"{p}.short"]:
+                if variant not in seen:
+                    seen.add(variant)
+                    all_patterns.append(variant)
         
-        return unique_patterns
+        return all_patterns
     
     def _get_output_dir(self, session_name: str, view_name: str) -> Path:
-        """Get output directory for a session and view."""
-        clean_session = session_name.replace('.short', '')
-        dir_name = f"{clean_session}_{view_name}"
-        return Path(self.config.output_dir) / "labeled-data" / dir_name
+        """Get output directory for a session and view.
+        
+        Uses the first matching pattern from _generate_video_patterns.
+        Falls back to simple session_view format.
+        """
+        patterns = self._generate_video_patterns(session_name, view_name)
+        # Use first pattern (most specific for the dataset type)
+        dir_name = patterns[0] if patterns else f"{session_name}_{view_name}"
+        return Path(self.config.output_dir) / self.labeled_data_prefix / dir_name
     
     def _extract_single_frame(self, video_path: str, frame_number: int, output_path: Path) -> bool:
-        """Extract a single frame using FFmpeg."""
+        """Extract a single frame using OpenCV (fast) or FFmpeg (fallback)."""
         if output_path.exists():
             return True
         
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            cmd = ['ffmpeg', '-i', video_path, '-vf', f'select=eq(n\\,{frame_number})', '-vframes', '1', '-y', str(output_path)]
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            # Try OpenCV first (much faster)
+            try:
+                import cv2
+                cap = cv2.VideoCapture(video_path)
+                if cap.isOpened():
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+                    ret, frame = cap.read()
+                    cap.release()
+                    if ret and frame is not None:
+                        cv2.imwrite(str(output_path), frame)
+                        return output_path.exists()
+            except ImportError:
+                pass
+            
+            # Fallback to FFmpeg with timestamp seeking (faster than select filter)
+            try:
+                probe_cmd = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                            '-show_entries', 'stream=r_frame_rate', '-of', 'csv=p=0', video_path]
+                result = subprocess.run(probe_cmd, capture_output=True, text=True)
+                fps_str = result.stdout.strip()
+                if '/' in fps_str:
+                    num, den = fps_str.split('/')
+                    fps = float(num) / float(den)
+                else:
+                    fps = float(fps_str) if fps_str else 30.0
+            except:
+                fps = 30.0
+            
+            timestamp = frame_number / fps
+            cmd = [
+                'ffmpeg', '-ss', f'{timestamp:.6f}', '-i', video_path,
+                '-vframes', '1', '-y', '-hide_banner', '-loglevel', 'error',
+                str(output_path)
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             return result.returncode == 0 and output_path.exists()
+            
         except Exception as e:
-            logger.warning(f"FFmpeg extraction failed for frame {frame_number}: {e}")
+            logger.warning(f"Frame extraction failed for frame {frame_number}: {e}")
             return False
     
 

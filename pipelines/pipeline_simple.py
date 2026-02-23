@@ -150,7 +150,7 @@ def pipeline(config_file: str, for_seed: int | None = None) -> None:
                     
                     # Run labeled frames extraction for each inference directory
                     for inference_dir in cfg_pipe.train_networks.inference_dirs:
-                        # I want to run only if there are files in the directory and it is not emptyh 
+                        # I want to run only if there are files in the directory and it is not empty
                         print(f"Checking if inference directory {inference_dir} exists and is not empty")
                         if os.path.exists(os.path.join(results_dir, inference_dir)) and os.listdir(os.path.join(results_dir, inference_dir)):
                             extract_labeled_frame_predictions(
