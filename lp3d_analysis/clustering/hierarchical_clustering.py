@@ -150,7 +150,7 @@ def run_hierarchical_clustering(
         # Fallback to MiniBatchKMeans for extremely large datasets
         warnings.warn(
             f"AgglomerativeClustering failed due to memory constraints. "
-            f"Falling back to MiniBatchKMeans (not hierarchical, but memory-efficient).",
+            f"Falling back to Birch clustering.",
             UserWarning
         )
         print(f"\n⚠ Memory error with hierarchical clustering")
@@ -172,7 +172,7 @@ def run_hierarchical_clustering(
         print(f"🔄 Clustering with Birch...")
         birch = Birch(
             n_clusters=n_clusters,
-            threshold=15, # You may need to tune this based on your scaled data - was 20
+            threshold=15, # You may need to tune this based on your scaled data - was 20 /15. my current results have 15 
             branching_factor=50
         )
         labels = birch.fit_predict(features)

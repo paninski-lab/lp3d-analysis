@@ -4,14 +4,14 @@ data:
     height: 256 # if doesn't work well try both on 384
     width: 256
   # ABSOLUTE path to data directory
-  # data_dir: /teamspace/studios/data/ibl-mouse
-  data_dir: /teamspace/studios/this_studio/pseudo_labeled_dataset_IBL_20k/ibl-mouse
+  data_dir: /teamspace/studios/data/ibl-mouse
+  # data_dir: /teamspace/studios/this_studio/pseudo_labeled_dataset_IBL_20k/ibl-mouse
   # ABSOLUTE path to unlabeled videos' directory
   # video_dir: /teamspace/studios/data/ibl-mouse/videos
   video_dir: /teamspace/studios/data/ibl-mouse/videos
   # camera calibration files location
-  # camera_params_file: /teamspace/studios/data/ibl-mouse/calibrations.csv
-  camera_params_file: /teamspace/studios/this_studio/pseudo_labeled_dataset_IBL_20k/ibl-mouse/calibrations.csv
+  camera_params_file: /teamspace/studios/data/ibl-mouse/calibrations.csv
+  # camera_params_file: /teamspace/studios/this_studio/pseudo_labeled_dataset_IBL_20k/ibl-mouse/calibrations.csv
   # location of labels; for example script, this should be relative to `data_dir`]
   csv_file:
     - CollectedData_rightCamera.csv
@@ -114,8 +114,8 @@ training:
   patch_mask:
     init_step: 700 # try in general 700
     final_step: 5000
-    init_ratio: 0.1
-    final_ratio: 0.5 # to disable patch masking set to 0.0
+    init_ratio: 0.0
+    final_ratio: 0.0 # to disable patch masking set to 0.0
 
 model:
   # list of unsupervised losses
@@ -194,8 +194,8 @@ losses:
 
   # supervised_pairwise_projections:
   #   log_weight: null
-  # supervised_reprojection_heatmap_mse:
-  #   log_weight: 0.5
+  supervised_reprojection_heatmap_mse:
+    log_weight: 0.5
     
 
 

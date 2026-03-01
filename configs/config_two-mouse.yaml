@@ -8,7 +8,7 @@ data:
   # ABSOLUTE path to unlabeled videos' directory
   video_dir: /teamspace/studios/data/two-mouse/videos
   # camera calibration files location
-  camera_params_file: /teamspace/studios/data/two-mouse/calibrations.csv
+  # camera_params_file: /teamspace/studios/data/two-mouse/calibrations.csv
   # location of labels; for example script, this should be relative to `data_dir`]
   csv_file:
     - CollectedData_Camera0.csv

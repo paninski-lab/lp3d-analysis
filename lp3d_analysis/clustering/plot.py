@@ -100,51 +100,6 @@ def plot_embeddings_three_ways(
     return fig
 
 
-def plot_dendrogram(
-    linkage_matrix: np.ndarray,
-    title: str = "Hierarchical Clustering Dendrogram",
-    truncate_mode: str = 'lastp',
-    p: int = 30,
-    figsize: Tuple[int, int] = (14, 6),
-    color_threshold: float = None,
-):
-    """
-    Plot dendrogram from linkage matrix.
-    
-    Args:
-        linkage_matrix: scipy linkage matrix (can be None if not computed)
-        title: plot title
-        truncate_mode: 'lastp' shows last p merged clusters
-        p: number of clusters to show in truncated dendrogram
-        figsize: figure size
-        color_threshold: threshold for coloring dendrogram branches
-        
-    Returns:
-        fig, ax: matplotlib figure and axis (or None, None if linkage_matrix is None)
-    """
-    if linkage_matrix is None:
-        print("⚠ Linkage matrix is None - dendrogram cannot be plotted")
-        print("  (This happens when dataset is too large for linkage computation)")
-        return None, None
-    
-    fig, ax = plt.subplots(figsize=figsize)
-    
-    dendrogram(
-        linkage_matrix,
-        truncate_mode=truncate_mode,
-        p=p,
-        ax=ax,
-        color_threshold=color_threshold,
-        above_threshold_color='gray',
-    )
-    
-    ax.set_title(title, fontsize=14)
-    ax.set_xlabel('Sample Index (or cluster size)')
-    ax.set_ylabel('Distance')
-    
-    plt.tight_layout()
-    return fig, ax
-
 
 
 def plot_cluster_radar_profiles(
@@ -156,6 +111,8 @@ def plot_cluster_radar_profiles(
     max_cols: int = 4,
     ylim: Tuple[float, float] = (-2.5, 2.5),
     standardize: bool = True,
+    figsize: Optional[Tuple[int, int]] = None,
+    save_path: Optional[str] = None,
 ) -> Tuple[plt.Figure, Dict[int, Dict]]:
     """
     Create radar (spider) plots showing feature profiles for ALL clusters.
@@ -172,6 +129,8 @@ def plot_cluster_radar_profiles(
         max_cols: maximum columns in subplot grid
         ylim: y-axis limits for radar plots (standardized units)
         standardize: if True, z-score normalize features before plotting
+        figsize: if provided, overrides figsize_per_cluster calculation
+        save_path: if provided, save figure as PDF to this path
         
     Returns:
         fig: matplotlib figure
@@ -210,9 +169,15 @@ def plot_cluster_radar_profiles(
     cols = min(max_cols, n_clusters)
     rows = int(np.ceil(n_clusters / cols))
     
+    # Determine figure size
+    if figsize is not None:
+        final_figsize = figsize
+    else:
+        final_figsize = (figsize_per_cluster[0] * cols, figsize_per_cluster[1] * rows)
+    
     fig, axes = plt.subplots(
         rows, cols, 
-        figsize=(figsize_per_cluster[0] * cols, figsize_per_cluster[1] * rows),
+        figsize=final_figsize,
         subplot_kw=dict(polar=True)
     )
     
@@ -256,6 +221,11 @@ def plot_cluster_radar_profiles(
     
     fig.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
     plt.tight_layout()
+    
+    # Save figure if path provided
+    if save_path:
+        fig.savefig(save_path, format='pdf', bbox_inches='tight', dpi=300)
+        print(f"✓ Radar plot saved to: {save_path}")
     
     return fig, cluster_profiles
 
@@ -329,75 +299,378 @@ def plot_reprojection_by_cluster(
 
 
 
-# def plot_reprojection_boxplots(
-#     reproj_errors: Dict,
-#     cluster_labels: np.ndarray,
-#     valid_mask: np.ndarray,
-#     keypoints: List[str],
-#     models_of_interest: List[str],
-#     model_short_names: Dict[str, str],
-#     cluster_names: Dict[int, str],
-#     keypoints_of_interest: List[str] = ['pawL', 'pawR'],
-#     figsize: Tuple[int, int] = (16, 8),
-# ):
-#     """
-#     Plot boxplots of reprojection error distribution by cluster.
-#     """
-#     kp_indices = {kp: keypoints.index(kp) for kp in keypoints_of_interest}
-#     n_clusters = len(np.unique(cluster_labels))
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.cluster.hierarchy import dendrogram
+from typing import Tuple
+
+def plot_enhanced_dendrogram(
+    linkage_matrix: np.ndarray,
+    title: str = "Hierarchical Clustering Dendrogram",
+    truncate_mode: str = 'lastp',
+    p: int = 30,
+    figsize: Tuple[int, int] = (14, 6),
+    color_threshold: float = None,
+    node_size: int = 40,
+):
+    """
+    Plot enhanced dendrogram from linkage matrix with visible nodes (circles).
     
-#     fig, axes = plt.subplots(len(keypoints_of_interest), n_clusters, 
-#                             figsize=figsize, sharey='row')
-    
-#     for row_idx, kp_name in enumerate(keypoints_of_interest):
-#         kp_idx = kp_indices[kp_name]
+    Args:
+        linkage_matrix: scipy linkage matrix (can be None if not computed)
+        title: plot title
+        truncate_mode: 'lastp' shows last p merged clusters
+        p: number of clusters to show in truncated dendrogram
+        figsize: figure size
+        color_threshold: threshold for coloring dendrogram branches
+        node_size: size of the circles used for nodes
         
-#         for cluster_id in range(n_clusters):
-#             ax = axes[row_idx, cluster_id] if len(keypoints_of_interest) > 1 else axes[cluster_id]
-            
-#             cluster_mask = cluster_labels == cluster_id
-            
-#             data_to_plot = []
-#             labels = []
-            
-#             for model_name in models_of_interest:
-#                 if model_name not in reproj_errors:
-#                     continue
-                
-#                 # Pool errors
-#                 all_errors = []
-#                 for session_name in reproj_errors[model_name].keys():
-#                     errors = reproj_errors[model_name][session_name]
-#                     all_errors.append(errors)
-                
-#                 if not all_errors:
-#                     continue
-                
-#                 pooled_errors = np.concatenate(all_errors, axis=0)
-#                 pooled_errors_valid = pooled_errors[valid_mask]
-                
-#                 kp_errors = pooled_errors_valid[cluster_mask, kp_idx, :]
-#                 kp_errors_mean = np.nanmean(kp_errors, axis=1)
-#                 kp_errors_clean = kp_errors_mean[~np.isnan(kp_errors_mean)]
-                
-#                 data_to_plot.append(kp_errors_clean)
-#                 labels.append(model_short_names.get(model_name, model_name))
-            
-#             if data_to_plot:
-#                 bp = ax.boxplot(data_to_plot, labels=labels, patch_artist=True)
-#                 colors = plt.cm.Set2(np.linspace(0, 1, len(data_to_plot)))
-#                 for patch, color in zip(bp['boxes'], colors):
-#                     patch.set_facecolor(color)
-#                     patch.set_alpha(0.7)
-            
-#             cluster_label = cluster_names.get(cluster_id, f'C{cluster_id}')
-#             ax.set_title(f'{cluster_label}', fontsize=9)
-#             ax.tick_params(axis='x', rotation=45)
-#             ax.grid(axis='y', alpha=0.3)
-            
-#             if cluster_id == 0:
-#                 ax.set_ylabel(f'{kp_name}\nReproj. Error (px)')
+    Returns:
+        fig, ax: matplotlib figure and axis (or None, None if linkage_matrix is None)
+    """
+    if linkage_matrix is None:
+        print("⚠ Linkage matrix is None - dendrogram cannot be plotted")
+        print("  (This happens when dataset is too large for linkage computation)")
+        return None, None
     
-#     fig.suptitle('Reprojection Error Distribution by Cluster', fontsize=14, y=1.02)
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # 1. Plot the standard dendrogram and capture its output dictionary
+    ddata = dendrogram(
+        linkage_matrix,
+        truncate_mode=truncate_mode,
+        p=p,
+        ax=ax,
+        color_threshold=color_threshold,
+        above_threshold_color='gray',
+    )
+    
+    # Extract the line coordinates and colors
+    icoord = np.array(ddata['icoord'])
+    dcoord = np.array(ddata['dcoord'])
+    colors = ddata['color_list']
+    
+    # 2. Overlay circles at every structural point
+    for x_coords, y_coords, color in zip(icoord, dcoord, colors):
+        # x_coords and y_coords define the upside-down 'U' shape of the branch
+        # Indices: 0=bottom-left, 1=top-left, 2=top-right, 3=bottom-right
+        
+        # Draw smaller circles at the bottom points (leaves or sub-clusters)
+        ax.scatter([x_coords[0], x_coords[3]], [y_coords[0], y_coords[3]], 
+                   color=color, s=node_size, zorder=3, edgecolors='white', linewidths=1)
+        
+        # Calculate the midpoint for the top junction and draw a slightly larger circle
+        mid_x = 0.5 * (x_coords[1] + x_coords[2])
+        top_y = y_coords[1] 
+        ax.scatter([mid_x], [top_y], 
+                   color=color, s=node_size * 1.5, zorder=3, edgecolors='white', linewidths=1)
+    
+    # 3. Clean up the aesthetics
+    ax.set_title(title, fontsize=16, pad=15)
+    ax.set_xlabel('Sample Index (or cluster size)', fontsize=12)
+    ax.set_ylabel('Distance', fontsize=12)
+    
+    # Remove top and right borders for a cleaner look
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    # Add a subtle grid to easily trace distances across the chart
+    ax.grid(axis='y', linestyle='--', alpha=0.5)
+    
+    plt.tight_layout()
+    return fig, ax
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import networkx as nx
+from typing import Tuple, Optional, Dict, List
+
+
+def linkage_to_digraph(linkage_matrix: np.ndarray) -> Tuple[nx.DiGraph, int]:
+    n_leaves = linkage_matrix.shape[0] + 1
+    G = nx.DiGraph()
+    for i, (left, right, dist, count) in enumerate(linkage_matrix):
+        parent = n_leaves + i
+        left, right = int(left), int(right)
+        G.add_edge(parent, left)
+        G.add_edge(parent, right)
+        G.nodes[parent]['dist'] = dist
+        G.nodes[parent]['count'] = int(count)
+    root = n_leaves + len(linkage_matrix) - 1
+    return G, root
+
+
+def hierarchy_pos_horizontal(
+    G: nx.DiGraph,
+    root: int,
+    y_spread: float = 1.0,
+    x_gap: float = 1.0,
+) -> Dict[int, Tuple[float, float]]:
+    """
+    Leaf-count-aware horizontal layout (root on LEFT, leaves on RIGHT).
+    
+    - x-axis = depth (each level is x_gap apart)
+    - y-axis = spread proportional to number of leaves below each subtree
+    
+    This prevents the 'collapsed to one corner' problem by giving each
+    subtree vertical space proportional to how many leaves it contains.
+    """
+
+    # Count leaves below each node
+    def count_leaves(node):
+        children = list(G.neighbors(node))
+        if not children:
+            return 1
+        return sum(count_leaves(c) for c in children)
+
+    leaf_counts = {n: count_leaves(n) for n in G.nodes()}
+
+    pos = {}
+
+    def assign_pos(node, x, y_min, y_max):
+        y_center = (y_min + y_max) / 2
+        pos[node] = (x, y_center)
+
+        children = list(G.neighbors(node))
+        if not children:
+            return
+
+        total_leaves = sum(leaf_counts[c] for c in children)
+        y_cursor = y_min
+        for child in children:
+            fraction = leaf_counts[child] / total_leaves
+            child_y_min = y_cursor
+            child_y_max = y_cursor + fraction * (y_max - y_min)
+            assign_pos(child, x + x_gap, child_y_min, child_y_max)
+            y_cursor = child_y_max
+
+    assign_pos(root, x=0, y_min=0, y_max=y_spread)
+    return pos
+
+
+# def plot_dendrogram(
+#     linkage_matrix: Optional[np.ndarray],
+#     title: str = "Hierarchical representation of behavior",
+#     figsize: Tuple[int, int] = (16, 9),
+#     leaf_node_size: int = 1200,
+#     internal_node_size: int = 200,
+#     leaf_node_color: str = "#4a4a4a",
+#     internal_node_color: str = "white",
+#     edge_color: str = "#222222",
+#     font_color: str = "white",
+#     font_size: int = 9,
+#     edge_width: float = 1.8,
+#     cluster_communities: Optional[Dict[int, List[int]]] = None,
+#     community_colors: Optional[Dict[int, str]] = None,
+# ) -> Tuple[Optional[plt.Figure], Optional[plt.Axes]]:
+
+#     if linkage_matrix is None:
+#         print("⚠ Linkage matrix is None — cannot plot.")
+#         return None, None
+
+#     G, root = linkage_to_digraph(linkage_matrix)
+#     n_leaves = linkage_matrix.shape[0] + 1
+#     leaf_nodes = list(range(n_leaves))
+#     internal_nodes = list(range(n_leaves, n_leaves + len(linkage_matrix)))
+
+#     # Use leaf-count-aware horizontal layout
+#     pos = hierarchy_pos_horizontal(G, root, y_spread=1.0, x_gap=1.0)
+
+#     fig, ax = plt.subplots(figsize=figsize)
+#     ax.set_title(title, fontsize=13, fontweight='normal', pad=16)
+#     ax.axis('off')
+
+#     # Draw edges
+#     nx.draw_networkx_edges(
+#         G, pos, ax=ax,
+#         edge_color=edge_color,
+#         width=edge_width,
+#         arrows=False,
+#     )
+
+#     # Internal nodes: small white circles with border
+#     nx.draw_networkx_nodes(
+#         G, pos,
+#         nodelist=internal_nodes,
+#         ax=ax,
+#         node_size=internal_node_size,
+#         node_color=internal_node_color,
+#         edgecolors=edge_color,
+#         linewidths=1.5,
+#     )
+
+#     # Leaf nodes: filled dark circles, all same size
+#     nx.draw_networkx_nodes(
+#         G, pos,
+#         nodelist=leaf_nodes,
+#         ax=ax,
+#         node_size=leaf_node_size,
+#         node_color=leaf_node_color,
+#         edgecolors='none',
+#     )
+
+#     # Labels inside leaf nodes
+#     nx.draw_networkx_labels(
+#         G, pos,
+#         labels={n: str(n) for n in leaf_nodes},
+#         ax=ax,
+#         font_size=font_size,
+#         font_color=font_color,
+#         font_weight='bold',
+#     )
+
+#     # Optional community halos
+#     if cluster_communities:
+#         _draw_community_halos(ax, pos, cluster_communities, community_colors)
+
+#     # Flip x-axis so root is on LEFT and leaves fan out to the RIGHT
+#     # (matches VAME figure orientation)
+#     ax.invert_xaxis()
+
 #     plt.tight_layout()
-#     return fig
+#     return fig, ax
+
+
+# def _draw_community_halos(
+#     ax, pos, cluster_communities, community_colors=None, padding=0.06, alpha=0.25,
+# ):
+#     default_colors = [
+#         '#e6194b', '#f58231', '#3cb44b', '#4363d8',
+#         '#911eb4', '#42d4f4', '#f032e6', '#bfef45', '#aaaaaa',
+#     ]
+#     for i, (comm_id, nodes) in enumerate(cluster_communities.items()):
+#         xs = [pos[n][0] for n in nodes if n in pos]
+#         ys = [pos[n][1] for n in nodes if n in pos]
+#         if not xs:
+#             continue
+#         cx = (max(xs) + min(xs)) / 2
+#         cy = (max(ys) + min(ys)) / 2
+#         w = max((max(xs) - min(xs)) + padding * 2, padding * 3)
+#         h = max((max(ys) - min(ys)) + padding * 2, padding * 3)
+#         color = (community_colors or {}).get(comm_id, default_colors[i % len(default_colors)])
+#         ax.add_patch(mpatches.Ellipse(
+#             (cx, cy), width=w, height=h,
+#             color=color, alpha=alpha, zorder=0,
+#             transform=ax.transData,
+#         ))
+
+from typing import Optional, Tuple, Dict, List
+import numpy as np
+import matplotlib.pyplot as plt
+import networkx as nx
+import matplotlib.patches as mpatches
+
+def plot_dendrogram(
+    linkage_matrix: Optional[np.ndarray],
+    title: str = "Hierarchical representation of behavior",
+    figsize: Tuple[int, int] = (10, 14),  # <- taller for vertical
+    leaf_node_size: int = 1200,
+    internal_node_size: int = 200,
+    leaf_node_color: str = "#4a4a4a",
+    internal_node_color: str = "white",
+    edge_color: str = "#222222",
+    font_color: str = "white",
+    font_size: int = 9,
+    edge_width: float = 1.8,
+    cluster_communities: Optional[Dict[int, List[int]]] = None,
+    community_colors: Optional[Dict[int, str]] = None,
+) -> Tuple[Optional[plt.Figure], Optional[plt.Axes]]:
+
+    if linkage_matrix is None:
+        print("⚠ Linkage matrix is None — cannot plot.")
+        return None, None
+
+    G, root = linkage_to_digraph(linkage_matrix)
+    n_leaves = linkage_matrix.shape[0] + 1
+    leaf_nodes = list(range(n_leaves))
+    internal_nodes = list(range(n_leaves, n_leaves + len(linkage_matrix)))
+
+    # --- Layout: compute horizontal positions, then rotate to vertical ---
+    pos_h = hierarchy_pos_horizontal(G, root, y_spread=1.0, x_gap=1.0)
+
+    # Rotate 90° clockwise: (x, y) -> (y, -x)
+    pos = {n: (y, x) for n, (x, y) in pos_h.items()}
+
+    # Flip vertically so root is at TOP and leaves go DOWN
+    ys = [p[1] for p in pos.values()]
+    ymin, ymax = min(ys), max(ys)
+    pos = {n: (x, ymax - (y - ymin)) for n, (x, y) in pos.items()}
+    # -------------------------------------------------------------------
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.set_title(title, fontsize=13, fontweight='normal', pad=16)
+    ax.axis('off')
+
+    # Draw edges
+    nx.draw_networkx_edges(
+        G, pos, ax=ax,
+        edge_color=edge_color,
+        width=edge_width,
+        arrows=False,
+    )
+
+    # Internal nodes: small white circles with border
+    nx.draw_networkx_nodes(
+        G, pos,
+        nodelist=internal_nodes,
+        ax=ax,
+        node_size=internal_node_size,
+        node_color=internal_node_color,
+        edgecolors=edge_color,
+        linewidths=1.5,
+    )
+
+    # Leaf nodes: filled dark circles
+    nx.draw_networkx_nodes(
+        G, pos,
+        nodelist=leaf_nodes,
+        ax=ax,
+        node_size=leaf_node_size,
+        node_color=leaf_node_color,
+        edgecolors='none',
+    )
+
+    # Labels inside leaf nodes
+    nx.draw_networkx_labels(
+        G, pos,
+        labels={n: str(n) for n in leaf_nodes},
+        ax=ax,
+        font_size=font_size,
+        font_color=font_color,
+        font_weight='bold',
+    )
+
+    # Optional community halos
+    if cluster_communities:
+        _draw_community_halos(ax, pos, cluster_communities, community_colors)
+
+    # NOTE: removed ax.invert_xaxis() because we are vertical now
+
+    plt.tight_layout()
+    return fig, ax
+
+
+def _draw_community_halos(
+    ax, pos, cluster_communities, community_colors=None, padding=0.06, alpha=0.25,
+):
+    default_colors = [
+        '#e6194b', '#f58231', '#3cb44b', '#4363d8',
+        '#911eb4', '#42d4f4', '#f032e6', '#bfef45', '#aaaaaa',
+    ]
+    for i, (comm_id, nodes) in enumerate(cluster_communities.items()):
+        xs = [pos[n][0] for n in nodes if n in pos]
+        ys = [pos[n][1] for n in nodes if n in pos]
+        if not xs:
+            continue
+        cx = (max(xs) + min(xs)) / 2
+        cy = (max(ys) + min(ys)) / 2
+        w = max((max(xs) - min(xs)) + padding * 2, padding * 3)
+        h = max((max(ys) - min(ys)) + padding * 2, padding * 3)
+        color = (community_colors or {}).get(comm_id, default_colors[i % len(default_colors)])
+        ax.add_patch(mpatches.Ellipse(
+            (cx, cy), width=w, height=h,
+            color=color, alpha=alpha, zorder=0,
+            transform=ax.transData,
+        ))

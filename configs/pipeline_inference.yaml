@@ -4,10 +4,10 @@
 # dataset_name: chickadee-crop
 # dataset_name: fly-anipose
 # dataset_name: mirror-mouse-separate
-dataset_name: ibl-mouse
+# dataset_name: ibl-mouse
 # dataset_name: rat7m-crop
 # dataset_name: human36m-crop
-# dataset_name: two-mouse
+dataset_name: two-mouse
 
 lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_${dataset_name}.yaml
 
@@ -17,7 +17,7 @@ pipeline_seeds: 0
 outputs_dir: /teamspace/studios/this_studio/outputs/${dataset_name}
 
 
-intermediate_results_dir: test_3235_MVT_distil_patch_masking_new_labels_1200
+intermediate_results_dir: test_100_MVT_patch_masking
 # initial training of an ensemble of networks
 train_networks:
   # run this section?
@@ -30,8 +30,8 @@ train_networks:
   # ensemble seeds
   ensemble_seeds:
     - 0
-    # - 1
-    # - 2
+    - 1
+    - 2
     # - 3
     # - 4
     # - 5
@@ -39,7 +39,7 @@ train_networks:
     
   # number of ground truth labels for training
   n_hand_labels: 
-    - 3235
+    - 100
   # model type
   model_types:
     # - supervised
@@ -99,7 +99,7 @@ post_processing_labeled_frames:
   overwrite: False
   modes:
     # - eks_singleview
-    - eks_multiview
+    # - eks_multiview
     # - ensemble_median
     # - ensemble_mean
 
@@ -108,7 +108,7 @@ post_processing_videos:
     run: False
     overwrite: False
     n_latent: 3 # components for pca object - 6 for chickadee and 3 for fly and mouse 
-    non_linear: True  # If True, uses nonlinear EKS with calibration files from data_dir/calibrations/{session}.toml. If False, uses linear EKS.
+    non_linear: False  # If True, uses nonlinear EKS with calibration files from data_dir/calibrations/{session}.toml. If False, uses linear EKS.
   eks_singleview:
     run: False
     overwrite: False

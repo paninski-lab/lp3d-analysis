@@ -1,0 +1,118 @@
+data:
+  image_resize_dims:
+    height: 256
+    width: 256
+  data_dir: /teamspace/studios/data/ibl-mouse
+  video_dir: /teamspace/studios/data/ibl-mouse/videos
+  camera_params_file: /teamspace/studios/data/ibl-mouse/calibrations.csv
+  csv_file:
+    - CollectedData_rightCamera.csv
+    - CollectedData_leftCamera.csv
+  view_names:
+    - rightCamera
+    - leftCamera
+    
+  downsample_factor: 2
+  num_keypoints: 3
+  keypoint_names:
+    - pawL
+    - pawR
+    - nose
+  mirrored_column_matches: [0, 1, 2]
+  columns_for_singleview_pca: []
+
+training:
+  imgaug: dlc
+  imgaug_3d: True
+  train_batch_size: 8
+  val_batch_size: 16
+  test_batch_size: 1
+  train_prob: 0.95
+  val_prob: 0.05
+  train_frames: 1
+  num_gpus: 1
+  num_workers: 4
+  early_stop_patience: 3
+  unfreezing_epoch: 20
+  min_epochs: 300
+  max_epochs: 300
+  log_every_n_steps: 10
+  check_val_every_n_epoch: 5
+  rng_seed_data_pt: 0
+  rng_seed_model_pt: 0
+  optimizer: Adam
+  optimizer_params:
+    learning_rate: 0.00005
+  lr_scheduler: multisteplr
+  lr_scheduler_params:
+    multisteplr:
+      milestones: [2000, 3000, 4000] 
+      gamma: 0.5
+  uniform_heatmaps_for_nan_keypoints: true
+  
+  patch_mask:
+    init_step: 700
+    final_step: 5000
+    init_ratio: 0.0
+    final_ratio: 0.0
+
+model:
+  losses_to_use: []
+  backbone: vits_dino
+  model_type: heatmap_multiview_transformer
+  head: heatmap_cnn
+  heatmap_loss_type: mse
+  model_name: test_model
+
+dali:
+  general:
+    seed: 123456
+  base:
+    train: 
+      sequence_length: 8
+    predict:
+      sequence_length: 16
+  context:
+    train:
+      batch_size: 16
+    predict:
+      sequence_length: 96
+  
+losses:
+  pca_multiview:
+    log_weight: 5.0
+    components_to_keep: 3
+    epsilon: null 
+  pca_singleview:
+    log_weight: 5.0
+    components_to_keep: 0.99
+    epsilon: null
+  temporal:
+    log_weight: 3.0
+    epsilon: 20.0
+    prob_threshold: 0.05
+  supervised_reprojection_heatmap_mse:
+    log_weight: 0.5
+
+eval:
+  predict_vids_after_training: true
+  test_videos_directory: ${data.video_dir}
+  save_vids_after_training: false
+  colormap: "cool"
+  confidence_thresh_for_vid: 0.90
+  hydra_paths: [" "]
+  fiftyone:
+    dataset_name: test
+    model_display_names: ["test_model"]
+    launch_app_from_script: false
+    remote: true
+    address: 127.0.0.1
+    port: 5151
+
+callbacks:
+  anneal_weight:
+    attr_name: total_unsupervised_importance
+    init_val: 0.0
+    increase_factor: 0.01
+    final_val: 1.0
+    freeze_until_epoch: 0
