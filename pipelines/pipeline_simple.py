@@ -131,7 +131,8 @@ def pipeline(config_file: str, for_seed: int | None = None) -> None:
                         inference_dirs=cfg_pipe.train_networks.inference_dirs,
                         overwrite=mode_config.overwrite,
                         **({"n_latent": mode_config.n_latent} if hasattr(mode_config, 'n_latent') else {}),
-                        **({"non_linear": mode_config.non_linear} if hasattr(mode_config, 'non_linear') else {"non_linear": False})
+                        **({"non_linear": mode_config.non_linear} if hasattr(mode_config, 'non_linear') else {"non_linear": False}),
+                        **({"output_folder_name": mode_config.output_folder_name} if hasattr(mode_config, 'output_folder_name') and mode_config.output_folder_name else {})
                     )
     
     # Second part - make labeled frames extraction completely independent
@@ -184,7 +185,8 @@ def pipeline(config_file: str, for_seed: int | None = None) -> None:
                         inference_dirs=cfg_pipe.train_networks.inference_dirs,
                         overwrite=mode_config.overwrite,
                         **({"n_latent": mode_config.n_latent} if hasattr(mode_config, 'n_latent') else {}),
-                        **({"non_linear": mode_config.non_linear} if hasattr(mode_config, 'non_linear') else {"non_linear": False})
+                        **({"non_linear": mode_config.non_linear} if hasattr(mode_config, 'non_linear') else {"non_linear": False}),
+                        **({"output_folder_name": mode_config.output_folder_name} if hasattr(mode_config, 'output_folder_name') and mode_config.output_folder_name else {})
                     )
 
     # # Add processing of labeled frames after post-processing videos

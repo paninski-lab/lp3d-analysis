@@ -170,7 +170,7 @@ def get_base_model_name(model_name):
     return model_name
 
 
-def process_view_data(ground_truth_csv, view_data, view_name, keypoints_to_use=None, ensemble_methods=None, sessions_to_ignore=None):
+def process_view_data(ground_truth_csv, view_data, view_name, keypoints_to_use=None, ensemble_methods=None, sessions_to_ignore=None, frames_to_exclude=None):
     """Process data for a specific view (top or bottom)/other views.
     
     Args:
@@ -180,6 +180,7 @@ def process_view_data(ground_truth_csv, view_data, view_name, keypoints_to_use=N
         keypoints_to_use: List of keypoints to use (default: all keypoints)
         ensemble_methods: List of ensemble method names for special processing
         sessions_to_ignore: List of session IDs (UUIDs) to exclude from processing
+        frames_to_exclude: List of frame indices/identifiers to exclude from processing (e.g., [22928])
     """
     # Set default ensemble methods if not provided
     if ensemble_methods is None:
@@ -190,6 +191,10 @@ def process_view_data(ground_truth_csv, view_data, view_name, keypoints_to_use=N
     # Set default sessions to ignore if not provided
     if sessions_to_ignore is None:
         sessions_to_ignore = []
+    
+    # Set default frames to exclude if not provided
+    if frames_to_exclude is None:
+        frames_to_exclude = []
     
     # Initialize lists for all models
     all_pred_csv_list = []
@@ -221,6 +226,17 @@ def process_view_data(ground_truth_csv, view_data, view_name, keypoints_to_use=N
             if original_len != filtered_len:
                 print(f"Filtered out {original_len - filtered_len} rows from ignored sessions")
         
+        # Filter out specific frames to exclude (using substring matching)
+        if frames_to_exclude:
+            original_len = len(raw_df_pred)
+            frames_to_exclude_str = [str(f) for f in frames_to_exclude]
+            pattern = '|'.join(frames_to_exclude_str)
+            mask = ~raw_df_pred.index.astype(str).str.contains(pattern, regex=True)
+            raw_df_pred = raw_df_pred[mask]
+            filtered_len = len(raw_df_pred)
+            if original_len != filtered_len:
+                print(f"Filtered out {original_len - filtered_len} frames containing: {frames_to_exclude}")
+        
         # Check if any ensemble method is in the prediction CSV
         is_ensemble = any(method in pred_csv for method in ensemble_methods)
         
@@ -248,6 +264,17 @@ def process_view_data(ground_truth_csv, view_data, view_name, keypoints_to_use=N
             if original_len != filtered_len:
                 print(f"Filtered out {original_len - filtered_len} rows from error file for ignored sessions")
         
+        # Filter out specific frames from error file (using substring matching)
+        if frames_to_exclude:
+            original_len = len(df)
+            frames_to_exclude_str = [str(f) for f in frames_to_exclude]
+            pattern = '|'.join(frames_to_exclude_str)
+            mask = ~df.index.astype(str).str.contains(pattern, regex=True)
+            df = df[mask]
+            filtered_len = len(df)
+            if original_len != filtered_len:
+                print(f"Filtered out {original_len - filtered_len} frames from error file containing: {frames_to_exclude}")
+        
         if 'set' in df.columns:
             df = df.drop(columns=['set'])
         df_error_list.append(df)
@@ -266,6 +293,17 @@ def process_view_data(ground_truth_csv, view_data, view_name, keypoints_to_use=N
         filtered_len = len(df_gt)
         if original_len != filtered_len:
             print(f"Filtered out {original_len - filtered_len} rows from ground truth for ignored sessions")
+    
+    # Filter out specific frames from ground truth (using substring matching)
+    if frames_to_exclude:
+        original_len = len(df_gt)
+        frames_to_exclude_str = [str(f) for f in frames_to_exclude]
+        pattern = '|'.join(frames_to_exclude_str)
+        mask = ~df_gt.index.astype(str).str.contains(pattern, regex=True)
+        df_gt = df_gt[mask]
+        filtered_len = len(df_gt)
+        if original_len != filtered_len:
+            print(f"Filtered out {original_len - filtered_len} frames from ground truth containing: {frames_to_exclude}")
     
     print("Number of models for ensemble std calculation:", len(all_pred_csv_list))
     print("Shape of predictions:", df_pred_list[0].shape)
@@ -463,8 +501,9 @@ def generate_model_configs(views):
         'eks_multiview_no_object_100': plot_colors.get('eks_multiview_no_object_100'),
         'eks_multiview_varinf_no_object': plot_colors.get('eks_multiview_varinf_no_object'),
         
-        # 'ens_med_anipose': plot_colors.get('ens_med_anipose'),
         'ens_med_anipose': plot_colors.get('ens_med_anipose'),
+        # 'ens_med_anipose': plot_colors.get('orange'),
+        # 'ens_med_anipose': 'orange',
         'eks_multiview_videos_new': plot_colors.get('eks_multiview_videos_new'),
         
     }
@@ -521,7 +560,7 @@ def save_plots(fig, output_dir, filename="pixel_error_vs_ensemble_std"):
     print(f"Plot saved to: {filepath}")
 
 
-def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, percentiles=[95, 50, 5], figsize = (5,7), dataset_name = 'fly-anipose'):
+def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, percentiles=[95, 50, 5], figsize = (5,7), dataset_name = 'fly-anipose',std_vals = np.arange(0, 8, 0.2), ylim=None):
     """
     Create a single plot that combines data across views for the same model type.
     
@@ -533,7 +572,9 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
     percentiles: Percentile values to show on the plot
     """
     print("\nStarting plot_comparison with view aggregation...")
-    std_vals = np.arange(0, 8, 0.2)
+    # std_vals = np.arange(0, 8, 0.2)
+    # std_vals = np.arange(0, 20, 0.5)
+    std_vals = std_vals
     
     # Create a single figure
     # for paper 
@@ -585,8 +626,8 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
         'v3_5k_128': '#ff7f0e',   # Safety Orange
         'v4_5k_128': 'orange' , # strong yellow    
         'v5_5k_128': '#9467bd',   # Muted Purple
-        'v6_5k_128': '#e377c2',  #'#8c564b',   # Chestnut Brown #8c564b --> this is for the case we don't compare 3d aug and dlc
-        # 'v6_5k_128': 'orange',  #'#8c564b',   # Chestnut Brown #8c564b
+        # 'v6_5k_128': '#e377c2',  #'#8c564b',   # Chestnut Brown #8c564b --> this is for the case we don't compare 3d aug and dlc
+        'v6_5k_128': 'orange',  #'#8c564b',   # Chestnut Brown #8c564b
         'v7_5k_128': '#e377c2',   # Raspberry Pink
         'v8_5k_128': 'lightseagreen',   # Olive Green
         'v9_5k_128': 'green',   # Blue-Green Cyan
@@ -623,7 +664,7 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
         'v38_5k_128': 'brown',
         # 'v29_5k_128': 'green',
         # 'v30_5k_128': 'green',
-        'v39_5k_128': 'blue',
+        'v39_5k_128': 'hotpink',
         'v40_5k_128': 'gray',
         'v55_5k_128': 'blue',
         'v57_5k_128': 'hotpink',
@@ -657,10 +698,11 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
         'v103_5k_128': 'green',
         'v104_5k_128': 'brown',
         
+        
         'v0_5k_128_non_linear_eks': 'green',
         'v0_5k_128_non_linear_eks_varinf': 'limegreen',
         'v0_5k_128_ensemble_median.0': 'orange',
-        'v0_5k_128_anipose_ens_med': 'red',
+        'v0_5k_128_anipose_ens_med': 'orange',
         'v0_5k_128_anipose_ens_med_4views': 'pink',
         'v0_5k_128_eks_singleview.0': 'blue',
         'v0_5k_128_eks_multiview.0': 'green',
@@ -673,7 +715,7 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
         'v0_5k_128_eks_multiview_videos_new.0': 'purple',
         'v0_5k_128_eks_multiview_resnet50.0': 'green',
         'v0_5k_128_ensemble_median_resnet50.0': 'red',
-        
+        'v0_5k_128_resnet50_anipose.0': 'gray',
     }
 
 
@@ -758,11 +800,12 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
             'v100_5k_128': 'MVT 3d aug mvt_nature clamp_Matt',
 
             'v101_5k_128': 'MVT 3d aug patch masking',
-            'v102_5k_128': 'MVT 3d aug patch masking (16,32)',
+            'v102_5k_128': 'MVT 3d loss patch mask',
             'v103_5k_128': 'MVT 3d loss supervised (4) patch masking (16,32) later freeze',
             'v104_5k_128': 'MVT 3d loss heatmap (0_05) patch masking (16,32) later freeze',
             'v105_5k_128': 'MVT 3d loss supervised (4) patch masking',
-            'v110_5k_128': 'MVT distilled',
+            'v110_5k_128': 'MVT distilled (3325)',
+            'v111_5k_128': 'MVT distilled (1235)',
 
             
 
@@ -778,6 +821,7 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
             # 'v0_5k_128_non_linear_eks_varinf': 'Non-linear EKS (Var Inflated)',
             'v0_5k_128_non_linear_eks_varinf': 'Non-lin_Varinf',
             'v0_5k_128_anipose_ens_med': 'Ensemble Median Anipose',
+            'v0_5k_128_resnet50_anipose.0': 'Resnet50 + Anipose',
         
             'v0_5k_128_anipose_ens_med': 'Med + Ani',
             'v0_5k_128_anipose_ens_med_4views': 'Med + Ani 4 views',
@@ -882,6 +926,10 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
                 errorbar='se', 
                 linewidth=2
             )
+    
+    # Set y-axis limit if provided
+    if ylim is not None:
+        ax.set_ylim(ylim)
     
     # Style the plot
     # ax.set_title(f'Combined View - {dataset_name} (n_hand_labels = {n_hand_labels})', fontsize=6, pad=10)

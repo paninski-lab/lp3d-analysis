@@ -4,6 +4,7 @@ data:
     width: 256
   data_dir: /teamspace/studios/data/ibl-mouse
   video_dir: /teamspace/studios/data/ibl-mouse/videos
+  camera_params_file: /teamspace/studios/data/ibl-mouse/calibrations.csv
   csv_file:
     - CollectedData_rightCamera.csv
     - CollectedData_leftCamera.csv
@@ -22,7 +23,7 @@ data:
 
 training:
   imgaug: dlc
-  imgaug_3d: False
+  imgaug_3d: True
   train_batch_size: 8
   val_batch_size: 16
   test_batch_size: 1
@@ -57,9 +58,9 @@ training:
 
 model:
   losses_to_use: []
-  # This will be dynamically updated by the sweep script
   backbone: vitb_dino
-  model_type: heatmap
+  model_type: heatmap_multiview_transformer
+  head: heatmap_cnn
   heatmap_loss_type: mse
   model_name: test_model
 
@@ -90,6 +91,8 @@ losses:
     log_weight: 3.0
     epsilon: 20.0
     prob_threshold: 0.05
+  # supervised_reprojection_heatmap_mse:
+  #   log_weight: 0.5
 
 eval:
   predict_vids_after_training: true

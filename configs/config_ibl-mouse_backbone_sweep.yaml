@@ -58,7 +58,7 @@ training:
 model:
   losses_to_use: []
   # This will be dynamically updated by the sweep script
-  backbone: vitb_dinov2
+  backbone: vitb_dino
   model_type: heatmap
   heatmap_loss_type: mse
   model_name: test_model

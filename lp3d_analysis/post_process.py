@@ -40,8 +40,85 @@ from lp3d_analysis.utils import (
 
 
 '''
-This is loading the pca and FA objects - we will probably not use it like that later 
+This is loading the pca and FA objects from config files
 '''
+
+class CustomUnpickler(pickle.Unpickler):
+    """Custom unpickler to handle special model classes"""
+    def find_class(self, module, name):
+        if name == "NaNPCA":
+            from lightning_pose.utils.pca import NaNPCA
+            return NaNPCA
+        elif name == "EnhancedFactorAnalysis":
+            from lp3d_analysis.pca_global import EnhancedFactorAnalysis
+            return EnhancedFactorAnalysis
+        return super().find_class(module, name)
+
+
+def load_models(pca_path=None, fa_path=None):
+    """
+    Load PCA and FA models from pickle files.
+    
+    Args:
+        pca_path: Path to PCA model pickle file (optional)
+        fa_path: Path to FA model pickle file (optional)
+    
+    Returns:
+        Tuple of (pca_object, fa_object) - either model can be None if loading fails
+    """
+    pca_object = None
+    fa_object = None
+    
+    # Try to load PCA model
+    if pca_path:
+        try:
+            with open(pca_path, "rb") as f:
+                pca_object = CustomUnpickler(f).load()
+            print(f"PCA model loaded successfully from {pca_path}")
+        except (AttributeError, FileNotFoundError) as e:
+            print(f"Error loading PCA model from {pca_path}: {e}")
+    
+    # Try to load FA model
+    if fa_path:
+        try:
+            with open(fa_path, "rb") as f:
+                fa_object = CustomUnpickler(f).load()
+            print(f"FA model loaded successfully from {fa_path}")
+        except (AttributeError, FileNotFoundError) as e:
+            print(f"Error loading FA model from {fa_path}: {e}")
+    
+    return pca_object, fa_object
+
+def _load_latent_models_from_config(cfg_lp, pca_object=None, fa_object=None):
+    """Helper function to load PCA and FA models from config if not provided"""
+    try:
+        if pca_object is None and hasattr(cfg_lp, 'latent_models'):
+            if hasattr(cfg_lp.latent_models, 'pca_model_path'):
+                pca_path = cfg_lp.latent_models.pca_model_path
+                if pca_path and pca_path != 'null' and pca_path.lower() != 'null':
+                    print(f"Loading PCA model from config path: {pca_path}")
+                    pca_object, _ = load_models(pca_path=pca_path)
+                else:
+                    print("PCA model path is null or empty in config, skipping PCA model loading")
+            else:
+                print("No PCA model path found in config")
+        
+        if fa_object is None and hasattr(cfg_lp, 'latent_models'):
+            if hasattr(cfg_lp.latent_models, 'fa_model_path'):
+                fa_path = cfg_lp.latent_models.fa_model_path
+                if fa_path and fa_path != 'null' and fa_path.lower() != 'null':
+                    print(f"Loading FA model from config path: {fa_path}")
+                    _, fa_object = load_models(fa_path=fa_path)
+                else:
+                    print("FA model path is null or empty in config, skipping FA model loading")
+            else:
+                print("No FA model path found in config")
+    
+    except Exception as e:
+        print(f"Error loading latent models from config: {e}")
+        print("Continuing without latent models")
+    
+    return pca_object, fa_object
 
 
 # pca_model_path = "/teamspace/studios/this_studio/pca_object_inD_mirror-mouse-separate.pkl"
@@ -298,9 +375,15 @@ def setup_ensemble_dirs(
     n_labels: int, 
     seed_range: tuple[int, int],
     mode: str,
-    inference_dir: str
+    inference_dir: str,
+    output_folder_name: str | None = None,
 ) -> Tuple[str, List[str], str]:
-    """Set up and return directories for ensemble processing"""
+    """Set up and return directories for ensemble processing
+    
+    Args:
+        output_folder_name: Optional custom name for the output folder. 
+                           If None, uses the mode name.
+    """
     ensemble_dir = os.path.join(
         base_dir,
         f"{model_type}_{n_labels}_{seed_range[0]}-{seed_range[1]}"
@@ -309,7 +392,8 @@ def setup_ensemble_dirs(
         os.path.join(base_dir, f"{model_type}_{n_labels}_{seed}")
         for seed in range(seed_range[0], seed_range[1] + 1)
     ]
-    output_dir = os.path.join(ensemble_dir, mode, inference_dir)
+    folder_name = output_folder_name if output_folder_name is not None else mode
+    output_dir = os.path.join(ensemble_dir, folder_name, inference_dir)
     os.makedirs(output_dir, exist_ok=True)
     
     return ensemble_dir, seed_dirs, output_dir
@@ -489,8 +573,10 @@ def _get_bbox_path_fn(p: Path, results_dir: Path, data_dir: Path) -> Path:
     corresponding bbox path in the data directory."""
     # Gets the current depth in the model directory.
     n_levels_up = len(p.parent.parts) - len(results_dir.parts)
-    # Hack: correct the logic for when transforming results of eks_multiview back to cropped space.
-    if "eks_multiview" in p.parts:
+    # Correct the logic for when transforming results of eks multiview back to cropped space.
+    # Check if any folder in the path contains "eks" but NOT "singleview"
+    # (covers eks_multiview, non_linear_eks, eks_varinf, etc., but NOT eks_singleview)
+    if any("eks" in part and "singleview" not in part for part in p.parts):
         n_levels_up -= 1
     # Get `p` relative to model_dir
     model_dir = p.parents[n_levels_up]
@@ -581,6 +667,7 @@ def process_multiview_directory(
     fa_object = None,
     get_bbox_path_fn: Callable[[Path, ], Path] | None = None,
     calibration: Optional[str] = None,
+    n_latent: int = 3,
 ) -> None:
     """Process a multiview directory for EKS multiview mode"""
 
@@ -671,6 +758,7 @@ def process_multiview_directory(
                 pca_object=pca_object,
                 inflate_vars_kwargs=inflate_vars_kwargs,
                 calibration=calibration,
+                n_latent=n_latent,
             )
             
             # Save results for each view
@@ -837,49 +925,30 @@ def post_process_ensemble_labels(
     mode: Literal['ensemble_mean', 'ensemble_median', 'eks_singleview', 'eks_multiview'],
     inference_dirs: List[str],
     overwrite: bool,
+    n_latent: int = 3,
     pca_object = None, 
     fa_object = None,
     non_linear: bool = False,
+    output_folder_name: str | None = None,
 ) -> None:
-    """Post-process ensemble labels"""
-
+    """Post-process ensemble labels
     
-    # Load PCA object if it doesn't exist
-    if pca_object is None:
-        # Check if it exists in the global scope
-        global_pca = globals().get('pca_object')
-        if global_pca is not None:
-            pca_object = global_pca
-            print("Loaded PCA object from global scope")
-        else:
-            # Try to load from the file
-            try:
-                with open(pca_model_path, "rb") as f:
-                    pca_object = CustomUnpickler(f).load()
-                print(f"Loaded PCA model from {pca_model_path} and the PCA components shape: {pca_object.components_.shape} ")
-            except Exception as e:
-                print(f"Could not load PCA model: {e}")
+    Args:
+        output_folder_name: Optional custom name for the output folder (e.g., 'non_linear_eks').
+                           If None, uses the mode name (e.g., 'eks_multiview').
+    """
+    print(f"n_latent is: {n_latent} ")
     
-    
-    if fa_object is None:
-        global_fa = globals().get('fa_object')
-        if fa_object is not None:
-            fa_object = global_fa
-            print("Loaded FA object from global scope")
-            print("Using FA object for variance inflation")
-        else:
-            # Try to load from the file
-            try:
-                with open(fa_model_path, "rb") as f:
-                    fa_object = CustomUnpickler(f).load()
-                print(f"Loaded FA model from {fa_model_path} and the FA components shape: {fa_object.components_.shape} ")
-            except Exception as e:
-                print(f"Could not load FA model: {e}")
+    # Load models if needed
+    pca_object, fa_object = _load_latent_models_from_config(cfg_lp, pca_object, fa_object)
+    print(f"Using PCA object: {pca_object}")
+    print(f"Using FA object: {fa_object}")
 
     # Setup directories
     base_dir = os.path.dirname(results_dir)
+    folder_name = output_folder_name if output_folder_name is not None else mode
     ensemble_dir, seed_dirs, _ = setup_ensemble_dirs(
-        base_dir, model_type, n_labels, seed_range, mode, ""
+        base_dir, model_type, n_labels, seed_range, mode, "", output_folder_name=output_folder_name
     )
     
     for inference_dir in inference_dirs:
@@ -896,7 +965,7 @@ def post_process_ensemble_labels(
             continue  # Skip this inference directory
             
         print(f"Subdirectories found in {inf_dir_in_first_seed}. Processing {inference_dir}...")
-        output_dir = os.path.join(ensemble_dir, mode, inference_dir)
+        output_dir = os.path.join(ensemble_dir, folder_name, inference_dir)
         os.makedirs(output_dir, exist_ok=True)
         
         # Get original directory structure
@@ -951,6 +1020,7 @@ def post_process_ensemble_labels(
                     fa_object=fa_object,
                     get_bbox_path_fn=lambda p: _get_bbox_path_fn(p, Path(results_dir), Path(cfg_lp.data.data_dir)),
                     calibration=calibration_file,
+                    n_latent=n_latent,
                 )
             
             # Process final predictions for all views
@@ -1002,13 +1072,45 @@ def post_process_ensemble_videos(
     mode: Literal['ensemble_mean', 'ensemble_median', 'eks_singleview', 'eks_multiview'],
     inference_dirs: List[str],
     overwrite: bool,
+    n_latent: int = 3,
+    pca_object = None,
+    fa_object = None,
     non_linear: bool = False,
+    output_folder_name: str | None = None,
 ) -> None:
-    """Post-process ensemble videos"""
+    """Post-process ensemble videos
+    
+    Args:
+        output_folder_name: Optional custom name for the output folder (e.g., 'non_linear_eks').
+                           If None, uses the mode name (e.g., 'eks_multiview').
+    """
+    print(f"n_latent is: {n_latent} ")
+    # Load models if needed
+    pca_object, fa_object = _load_latent_models_from_config(cfg_lp, pca_object, fa_object)
+    print(f"Using PCA object: {pca_object}")
+    print(f"Using FA object: {fa_object}")
+
+    # Prepare FA parameters for inflation if FA object is available
+    inflate_vars_kwargs = {}
+    if fa_object is not None:
+        print("Extracting FA parameters for variance inflation")
+        try:
+            loading_matrix = fa_object.components_.T
+            mean = fa_object.mean_
+            
+            inflate_vars_kwargs = {
+                'loading_matrix': loading_matrix,
+                'mean': np.zeros_like(mean)
+            }
+            print("Successfully extracted FA parameters for variance inflation")
+        except AttributeError as e:
+            print(f"Error extracting FA parameters: {e}. Using default inflation parameters.")
+
     # Setup directories
     base_dir = os.path.dirname(results_dir)
+    folder_name = output_folder_name if output_folder_name is not None else mode
     ensemble_dir, seed_dirs, _ = setup_ensemble_dirs(
-        base_dir, model_type, n_labels, seed_range, mode, ""
+        base_dir, model_type, n_labels, seed_range, mode, "", output_folder_name=output_folder_name
     )
     
     for inference_dir in inference_dirs:
@@ -1026,7 +1128,7 @@ def post_process_ensemble_videos(
             continue  # Skip if there are any subdirectories
 
         print(f"Directory contains only files. Processing {inference_dir}...")
-        output_dir = os.path.join(ensemble_dir, mode, inference_dir)
+        output_dir = os.path.join(ensemble_dir, folder_name, inference_dir)
         os.makedirs(output_dir, exist_ok=True)
 
         if mode == 'eks_multiview':
@@ -1036,6 +1138,19 @@ def post_process_ensemble_videos(
             # There should be one file per session. These we call "first view sessions".
             first_view_sessions = list(map(str, files_by_view[views[0]]))
             for first_view_session in first_view_sessions:
+                # Check if all output files already exist for this session
+                all_outputs_exist = True
+                for view in views:
+                    session = first_view_session.replace(views[0], view)
+                    result_file = Path(output_dir) / session
+                    if not result_file.exists():
+                        all_outputs_exist = False
+                        break
+                
+                if all_outputs_exist and not overwrite:
+                    print(f"Skipping session {first_view_session} - all output files already exist (overwrite=False)")
+                    continue
+                
                 # Process multiview case for videos
                 all_pred_files = []
 
@@ -1065,18 +1180,24 @@ def post_process_ensemble_videos(
 
                 # Not None when there's bbox files in the dataset, i.e. chickadee-crop.
                 all_pred_files_uncropped = prepare_uncropped_csv_files(all_pred_files, lambda p: _get_bbox_path_fn(p, Path(results_dir), Path(cfg_lp.data.data_dir)))
-
-
+                print(f"all_pred_files_uncropped is {all_pred_files_uncropped}")
+                
                 input_dfs_list, keypoint_names = format_data(
                     input_source=all_pred_files_uncropped or all_pred_files,
                     camera_names=views,
                 )
+ 
+                print(f" input dfs list: {input_dfs_list}")
 
                 # Run multiview EKS
                 results_dfs = run_eks_multiview(
                     markers_list=input_dfs_list,
                     keypoint_names=keypoint_names,
                     views=views,
+                    quantile_keep_pca=50,
+                    inflate_vars_kwargs=inflate_vars_kwargs,
+                    n_latent=n_latent,
+                    pca_object=pca_object,
                     calibration=calibration_file,
                 )
 
@@ -1162,10 +1283,9 @@ def run_eks_multiview(
     quantile_keep_pca: float = 50,
     avg_mode: str = 'median',
     var_mode: str = 'confidence_weighted_var',
-    # inflate_vars_likelihood_thresh = None,
-    # inflate_vars_v_quantile_thresh = None,
     inflate_vars_kwargs: dict = {},
     verbose: bool = False,
+    n_latent: int = 3,
     pca_object = None,
     calibration: Optional[str] = None,
 ) -> dict[str, pd.DataFrame]:
@@ -1214,15 +1334,15 @@ def run_eks_multiview(
     camera_dfs, smooth_params_final = ensemble_kalman_smoother_multicam(
         marker_array = marker_array,
         keypoint_names = keypoint_names,
-        smooth_param = 10000, #None,
-        quantile_keep_pca= quantile_keep_pca, #quantile_keep_pca
+        smooth_param = None,
+        quantile_keep_pca= quantile_keep_pca,
         camera_names = views,
-        s_frames = [(None,None)], # Keemin wil fix 
+        s_frames = [(None,None)],
         avg_mode = avg_mode,
         var_mode = var_mode,
-        inflate_vars = True,
+        inflate_vars = False,
         inflate_vars_kwargs = inflate_vars_kwargs,
-        n_latent = 6,
+        n_latent = n_latent,
         verbose = verbose,
         pca_object = pca_object,
         camgroup = camgroup,

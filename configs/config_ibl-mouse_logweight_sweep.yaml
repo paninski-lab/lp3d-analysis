@@ -92,7 +92,7 @@ losses:
     epsilon: 20.0
     prob_threshold: 0.05
   supervised_reprojection_heatmap_mse:
-    log_weight: 2
+    log_weight: 0.5
 
 eval:
   predict_vids_after_training: true

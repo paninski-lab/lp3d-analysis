@@ -432,28 +432,28 @@ dataset_info = {
             'Haunch_right_white',     # 20
             'Neck_white',             # 21
         ],
-        'skeleton': np.array([
-            [ 3,  5],
-            [ 3, 12],
-            [ 3, 13],
-            [ 3,  6],
-            [ 5,  0],
-            [ 5, 14],
-            [ 5, 10],
-            [ 5, 11],
-            [ 5,  1],
-            [ 5,  2],
-            [ 18,  20],
-            [ 18, 27],
-            [ 18, 28],
-            [ 18,  21],
-            [ 20,  15],
-            [ 20, 29],
-            [ 20, 25],
-            [ 20, 26],
-            [ 20,  16],
-            [ 20,  17],
 
+        'skeleton': np.array([
+            [ 3,  4],   # TTI_black -> Head_black
+            [ 3,  8],   # TTI_black -> Haunch_left_black
+            [ 3,  9],   # TTI_black -> Haunch_right_black
+            [ 3,  5],   # TTI_black -> Trunk_black
+            [ 4,  0],   # Head_black -> Nose_black
+            [ 4, 10],   # Head_black -> Neck_black
+            [ 4,  6],   # Head_black -> Shoulder_left_black
+            [ 4,  7],   # Head_black -> Shoulder_right_black
+            [ 4,  1],   # Head_black -> Ear_R_black
+            [ 4,  2],   # Head_black -> Ear_L_black
+            [14, 15],   # TTI_white -> Head_white
+            [14, 19],   # TTI_white -> Haunch_left_white
+            [14, 20],   # TTI_white -> Haunch_right_white
+            [14, 16],   # TTI_white -> Trunk_white
+            [15, 11],   # Head_white -> Nose_white
+            [15, 21],   # Head_white -> Neck_white
+            [15, 17],   # Head_white -> Shoulder_left_white
+            [15, 18],   # Head_white -> Shoulder_right_white
+            [15, 12],   # Head_white -> Ear_R_white
+            [15, 13],   # Head_white -> Ear_L_white
         ]),
         'skeleton_colors': [
             # the black mouse 

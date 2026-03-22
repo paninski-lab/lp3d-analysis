@@ -1,13 +1,13 @@
-dataset_name: ibl-mouse
+dataset_name: two-mouse
 
-lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_ibl-mouse_backbone_sweep.yaml
+lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_two-mouse_logweight_sweep.yaml
 
 pipeline_seeds: 0
 
 outputs_dir: /teamspace/lightning_storage/Nature_results/outputs/${dataset_name}
 
-# This will be dynamically updated by the sweep script to: test_200_SV_{backbone_name}
-intermediate_results_dir: test_200_SV_vitb_dino
+# Dynamically updated by sweep script
+intermediate_results_dir: test_100_MVT_3d_loss_heat_(0_5)
 
 train_networks:
   run: True
@@ -19,9 +19,9 @@ train_networks:
     - 2
     
   n_hand_labels: 
-    - 200
+    - 100
   model_types:
-    - supervised
+    - mvt_3d_loss
      
   inference_dirs: []
 

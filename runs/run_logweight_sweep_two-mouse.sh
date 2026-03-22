@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# Sweep over supervised_reprojection_heatmap_mse log_weight values for ibl-mouse MVT 3D loss
+# Sweep over supervised_reprojection_heatmap_mse log_weight values for two-mouse MVT 3D loss
 # For each log_weight, trains 3 seeds and saves to Lightning Storage
 #
 # Usage:
-#   ./run_logweight_sweep.sh           # All log_weights on CUDA device 0
-#   ./run_logweight_sweep.sh 1         # All log_weights on CUDA device 1
-#   ./run_logweight_sweep.sh 0 0.5,1   # Only specific log_weights
+#   ./run_logweight_sweep_two-mouse.sh           # All log_weights on CUDA device 0
+#   ./run_logweight_sweep_two-mouse.sh 1         # All log_weights on CUDA device 1
+#   ./run_logweight_sweep_two-mouse.sh 0 0.5,1   # Only specific log_weights
 
 set -e
 
@@ -19,8 +19,8 @@ export CUDA_LAUNCH_BLOCKING="${CUDA_LAUNCH_BLOCKING:-1}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LP3D_DIR="$(dirname "$SCRIPT_DIR")"
 CONFIG_DIR="${LP3D_DIR}/configs"
-PIPELINE_CONFIG="${CONFIG_DIR}/pipeline_inference_logweight_sweep_ibl-mouse.yaml"
-LIGHTNING_CONFIG="${CONFIG_DIR}/config_ibl-mouse_logweight_sweep.yaml"
+PIPELINE_CONFIG="${CONFIG_DIR}/pipeline_inference_logweight_sweep_two-mouse.yaml"
+LIGHTNING_CONFIG="${CONFIG_DIR}/config_two-mouse_logweight_sweep.yaml"
 
 for f in "$PIPELINE_CONFIG" "$LIGHTNING_CONFIG"; do
     if [ ! -f "$f" ]; then
@@ -29,7 +29,7 @@ for f in "$PIPELINE_CONFIG" "$LIGHTNING_CONFIG"; do
     fi
 done
 
-OUTPUT_BASE="/teamspace/lightning_storage/Nature_results/outputs/ibl-mouse"
+OUTPUT_BASE="/teamspace/lightning_storage/Nature_results/outputs/two-mouse"
 mkdir -p "$OUTPUT_BASE"
 
 # Backup configs
@@ -80,7 +80,7 @@ fi
 TOTAL=${#WEIGHTS[@]}
 
 echo "=========================================="
-echo "Log Weight Sweep - ibl-mouse (MVT 3D loss)"
+echo "Log Weight Sweep - two-mouse (MVT 3D loss)"
 echo "=========================================="
 echo "  CUDA device:   $CUDA_DEVICE"
 echo "  Log weights:   ${WEIGHTS[*]}"
@@ -97,7 +97,7 @@ for i in "${!WEIGHTS[@]}"; do
     w="${WEIGHTS[$i]}"
     name="${NAMES[$i]}"
     COUNTER=$((COUNTER + 1))
-    RESULTS_NAME="test_200_MVT_3d_loss_heat_(${name})"
+    RESULTS_NAME="test_100_MVT_3d_loss_heat_(${name})"
 
     echo "----------------------------------------"
     echo "[$COUNTER/$TOTAL] log_weight=${w}  ->  ${RESULTS_NAME}"
@@ -139,10 +139,9 @@ fi
 echo ""
 echo "Results saved to: $OUTPUT_BASE"
 for i in "${!WEIGHTS[@]}"; do
-    echo "  test_200_MVT_3d_loss_heat_(${NAMES[$i]})/"
+    echo "  test_100_MVT_3d_loss_heat_(${NAMES[$i]})/"
 done
 echo "=========================================="
 
-# ./lp3d-analysis/runs/run_logweight_sweep.sh 1          # all weights, GPU 0
-# ./lp3d-analysis/runs/run_logweight_sweep.sh 0 0.5,1    # only specific weights
-# ./lp3d-analysis/runs/run_logweight_sweep.sh 2 8,6
+# ./lp3d-analysis/runs/run_logweight_sweep_two-mouse.sh 1          # all weights, GPU 1
+# ./lp3d-analysis/runs/run_logweight_sweep_two-mouse.sh 0 0.5,1    # only specific weights

@@ -139,8 +139,10 @@ def _get_bbox_path_fn(p: Path, results_dir: Path, data_dir: Path) -> Path:
     corresponding bbox path in the data directory."""
     # Gets the current depth in the model directory.
     n_levels_up = len(p.parent.parts) - len(results_dir.parts)
-    # Hack: correct the logic for when transforming results of eks_multiview back to cropped space.
-    if "eks_multiview" in p.parts:
+    # Correct the logic for when transforming results of eks multiview back to cropped space.
+    # Check if any folder in the path contains "eks" but NOT "singleview"
+    # (covers eks_multiview, non_linear_eks, eks_varinf, etc., but NOT eks_singleview)
+    if any("eks" in part and "singleview" not in part for part in p.parts):
         n_levels_up -= 1
     # Get `p` relative to model_dir
     model_dir = p.parents[n_levels_up]
@@ -311,12 +313,17 @@ def post_process_ensemble_videos(
     inference_dirs: List[str],
     overwrite: bool,
     n_latent: int = 3,
-    # n_latent: int | None = None,
     pca_object = None,
     fa_object = None,
     non_linear: bool = False,
+    output_folder_name: str | None = None,
 ) -> None:
-    """Post-process ensemble videos"""
+    """Post-process ensemble videos
+    
+    Args:
+        output_folder_name: Optional custom name for the output folder (e.g., 'non_linear_eks').
+                           If None, uses the mode name (e.g., 'eks_multiview').
+    """
     print(f"n_latent is: {n_latent} ")
     # Load models if needed
     pca_object, fa_object = _load_latent_models_from_config(cfg_lp, pca_object, fa_object)
@@ -344,6 +351,7 @@ def post_process_ensemble_videos(
 
     # Setup directories
     base_dir = os.path.dirname(results_dir)
+    folder_name = output_folder_name if output_folder_name is not None else mode
     ensemble_dir, seed_dirs, _ = setup_ensemble_dirs(
         base_dir, model_type, n_labels, seed_range, mode, ""
     )
@@ -363,7 +371,7 @@ def post_process_ensemble_videos(
             continue  # Skip if there are any subdirectories
 
         print(f"Directory contains only files. Processing {inference_dir}...")
-        output_dir = os.path.join(ensemble_dir, mode, inference_dir)
+        output_dir = os.path.join(ensemble_dir, folder_name, inference_dir)
         os.makedirs(output_dir, exist_ok=True)
 
         if mode == 'eks_multiview':
@@ -420,7 +428,7 @@ def post_process_ensemble_videos(
                     camera_names=views,
                 )
  
-                print(f" input dfs list: {input_dfs_list}")
+                # print(f" input dfs list: {input_dfs_list}")
 
                 # Run multiview EKS
                 # n_latent = n_latent if n_latent is not None else 3
@@ -881,10 +889,10 @@ def run_eks_multiview(
         quantile_keep_pca= quantile_keep_pca, 
         camera_names = views,
         # s_frames = [(None,None)], # Keemin wil fix 
-        s_frames = [(0,10000)], # used to have 10000 
+        s_frames = [(0,1800)], # used to have 10000 
         avg_mode = avg_mode,
         var_mode = var_mode,
-        inflate_vars = False,
+        inflate_vars = True,
         inflate_vars_kwargs = inflate_vars_kwargs,
         n_latent = n_latent,
         verbose = verbose,

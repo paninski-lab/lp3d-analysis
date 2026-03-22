@@ -7,7 +7,7 @@ pipeline_seeds: 0
 outputs_dir: /teamspace/lightning_storage/Nature_results/outputs/${dataset_name}
 
 # Dynamically updated by sweep script
-intermediate_results_dir: test_200_MVT_3d_loss_heat_(2)
+intermediate_results_dir: test_200_MVT_3d_loss_heat_(0_5)
 
 train_networks:
   run: True

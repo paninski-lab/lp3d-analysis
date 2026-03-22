@@ -11,6 +11,7 @@ from omegaconf import DictConfig
 from pathlib import Path
 
 from lightning_pose.utils import io as io_utils
+from lightning_pose.metrics import pixel_error
 from lightning_pose.utils.scripts import (
     compute_metrics,
     compute_metrics_single,
@@ -527,6 +528,116 @@ def prepare_uncropped_csv_files(csv_files: list[str], get_bbox_path_fn: Callable
         generate_cropped_csv_file(p, bbox_path, remapped_p, img_height = 320, img_width = 320, mode="add")
 
     return csv_files_uncropped
+
+
+def _ordered_xy_pairs_for_keypoints(
+    df: pd.DataFrame, keypoint_names: list[str]
+) -> list[tuple[Any, Any]]:
+    """Return (x_col, y_col) multi-index tuples per keypoint, in keypoint order."""
+    pairs: list[tuple[Any, Any]] = []
+    for bp in keypoint_names:
+        x_cols = [c for c in df.columns if isinstance(c, tuple) and len(c) >= 3 and c[1] == bp and c[2] == "x"]
+        y_cols = [c for c in df.columns if isinstance(c, tuple) and len(c) >= 3 and c[1] == bp and c[2] == "y"]
+        if len(x_cols) != 1 or len(y_cols) != 1:
+            raise ValueError(f"Expected one x and one y column for bodypart {bp!r}, got x={x_cols!r} y={y_cols!r}")
+        pairs.append((x_cols[0], y_cols[0]))
+    return pairs
+
+
+def _keypoint_names_in_column_order(labels_df: pd.DataFrame) -> list[str]:
+    """Bodypart names in first-seen order for x columns (skips set and non-xy)."""
+    seen: list[str] = []
+    for c in labels_df.columns:
+        if not isinstance(c, tuple) or len(c) < 3:
+            continue
+        if c[0] == "set":
+            continue
+        if c[2] != "x":
+            continue
+        bp = c[1]
+        if bp not in seen:
+            seen.append(bp)
+    return seen
+
+
+def _set_column_key(df: pd.DataFrame) -> tuple[Any, ...] | None:
+    """MultiIndex column label for train/val ``set``, if present."""
+    exact = ("set", "", "")
+    if exact in df.columns:
+        return exact
+    for c in df.columns:
+        if isinstance(c, tuple) and len(c) >= 1 and c[0] == "set":
+            return c
+    return None
+
+
+def write_labeled_pixel_error_csv(
+    preds_file: str | Path,
+    labels_file: str | Path,
+    output_file: str | Path | None = None,
+    set_column_from_file: str | Path | None = None,
+) -> Path:
+    """Per-keypoint Euclidean pixel error vs labels; saves next to preds (Lightning Pose convention).
+
+    Use this when predictions are x,y-only (no likelihood) or lack a ``set`` column, so
+    ``compute_metrics_single`` would not run the pixel_error branch.
+
+    Output path: ``{preds_stem}_pixel_error.csv`` (e.g. ``predictions_camera1_new_pixel_error.csv``).
+
+    Args:
+        preds_file: Model predictions CSV (multi-index header, same row index as labels).
+        labels_file: Ground-truth ``CollectedData_*`` CSV.
+        output_file: Optional explicit output path.
+        set_column_from_file: Optional CSV with the same index; if it has a ``set`` column
+            (multi-index ``("set","","")`` or scorer level ``set``), that column is copied
+            into the error table (e.g. train/validation split).
+    """
+    preds_path = Path(preds_file)
+    pred_df = pd.read_csv(preds_path, header=[0, 1, 2], index_col=0)
+    pred_df = io_utils.fix_empty_first_row(pred_df)
+    labels_df = pd.read_csv(labels_file, header=[0, 1, 2], index_col=0)
+    labels_df = io_utils.fix_empty_first_row(labels_df)
+
+    if not pred_df.index.equals(labels_df.index):
+        raise ValueError(
+            f"Prediction index does not match labels: {preds_path} vs {labels_file}"
+        )
+
+    keypoint_names = _keypoint_names_in_column_order(labels_df)
+    if not keypoint_names:
+        raise ValueError(f"No x/y keypoint columns found in {labels_file}")
+
+    pairs_l = _ordered_xy_pairs_for_keypoints(labels_df, keypoint_names)
+    pairs_p = _ordered_xy_pairs_for_keypoints(pred_df, keypoint_names)
+
+    n = len(labels_df)
+    k = len(keypoint_names)
+    true_kp = np.empty((n, k, 2), dtype=np.float64)
+    pred_kp = np.empty((n, k, 2), dtype=np.float64)
+    for i, ((xl, yl), (xp, yp)) in enumerate(zip(pairs_l, pairs_p)):
+        true_kp[:, i, 0] = labels_df[xl].to_numpy()
+        true_kp[:, i, 1] = labels_df[yl].to_numpy()
+        pred_kp[:, i, 0] = pred_df[xp].to_numpy()
+        pred_kp[:, i, 1] = pred_df[yp].to_numpy()
+
+    err = pixel_error(true_kp, pred_kp)
+    error_df = pd.DataFrame(err, index=labels_df.index, columns=keypoint_names)
+
+    if set_column_from_file is not None:
+        ref = pd.read_csv(set_column_from_file, header=[0, 1, 2], index_col=0)
+        ref = io_utils.fix_empty_first_row(ref)
+        set_key = _set_column_key(ref)
+        if set_key is not None:
+            error_df["set"] = ref.loc[error_df.index, set_key]
+    else:
+        set_key = _set_column_key(pred_df)
+        if set_key is not None:
+            error_df["set"] = pred_df.loc[:, set_key]
+
+    out = Path(output_file) if output_file is not None else preds_path.with_name(preds_path.stem + "_pixel_error.csv")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    error_df.to_csv(out)
+    return out
 
 
 def extract_session_info(filename: str, view_names: list[str]) -> tuple[str, str]:

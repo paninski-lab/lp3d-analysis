@@ -5,17 +5,18 @@
 # dataset_name: "chickadee-crop"
 # dataset_name: "mirror-mouse-separate"
 # dataset_name: "fly-anipose"
-dataset_name: "ibl-mouse"
+# dataset_name: "ibl-mouse"
+dataset_name: "two-mouse"
 
 
 # Lightning-pose config path (required by load_cfgs)
 lightning_pose_config: "/teamspace/studios/this_studio/lp3d-analysis/configs/config_${dataset_name}.yaml"
 # Base paths (will be used to auto-construct paths based on dataset_name)
 base_data_dir: "/teamspace/studios/data"
-pseudo_labeled_base_dir: "/teamspace/studios/this_studio/pseudo_labeled_dataset_IBL_15k"
+pseudo_labeled_base_dir: "/teamspace/studios/this_studio/pseudo_labeled_dataset_two-mouse_3000_frames_random"
 
 # Number of train frames to use (for interpolation in paths)
-train_frames: 200
+train_frames: 100
 
 # Distillation pipeline configuration
 distillation:
@@ -34,24 +35,27 @@ distillation:
 
 
   # for mirror-mouse-separate - make sure to change later for videos and use varinf 
-  # eks_results_dir: "/teamspace/studios/this_studio/outputs/ibl-mouse/test_200_MVT_3d_aug_patch_masking_new_labels/multiview_transformer_${train_frames}_0-2/eks_multiview_varinf/videos_new"
-  eks_results_dir: "/teamspace/studios/this_studio/outputs/ibl-mouse/test_200_MVT_3d_aug_patch_masking_new_labels/multiview_transformer_${train_frames}_0-2/eks_multiview/videos_new"
+  # eks_results_dir: "/teamspace/studios/this_studio/outputs/ibl-mouse/test_200_MVT_3d_aug_patch_masking/multiview_transformer_${train_frames}_0-2/eks_multiview_varinf/videos_new"
+  # eks_results_dir: "/teamspace/studios/this_studio/outputs/ibl-mouse/test_200_MVT_3d_aug_patch_masking/multiview_transformer_${train_frames}_0-2/eks_multiview/videos_new"
+  # eks_results_dir: "/teamspace/studios/this_studio/outputs/ibl-mouse/test_200_MVT_3d_aug_patch_masking/multiview_transformer_${train_frames}_0-2/non_linear_eks_varinf/videos_new"
   # eks_results_dir: "/teamspace/studios/this_studio/outputs/${dataset_name}/test_200_MVT_patch_masking/multiview_transformer_${train_frames}_0-2/eks_multiview_varinf/videos"  # Will be auto-constructed from eks_model_info
   # eks_results_dir: "/teamspace/studios/this_studio/outputs/${dataset_name}/test_200_MVT_patch_masking/multiview_transformer_${train_frames}_0-2/ensemble_median/videos"  # Will be auto-constructed from eks_model_info
   # eks_results_dir: "/teamspace/studios/this_studio/outputs/${dataset_name}/test_200_MVT_3d_loss_patch_masking/mvt_3d_loss_${train_frames}_0-2/eks_singleview/videos"  # Will be auto-constructed from eks_model_info
   # eks_results_dir: "/teamspace/studios/this_studio/outputs/${dataset_name}/test_200_MVT_3d_loss_patch_masking/mvt_3d_loss_200_0-2/eks_multiview/videos_new"  
+  eks_results_dir: "/teamspace/studios/this_studio/outputs/two-mouse/test_100_MVT_3d_loss_patch_masking/mvt_3d_loss_${train_frames}_0-2/non_linear_eks_varinf/videos_new"
+
   camera_params_dir: null  # Will be auto-constructed from dataset_name
   existing_data_dir: null  # Will be auto-constructed from dataset_name
   video_base_dir: null  # Will be auto-constructed from dataset_name
   
   # Pipeline parameters
-  frames_per_video: 15000  # Number of frames to select per video after variance filtering
-  n_clusters: 3000  # Number of clusters for 3D pose clustering
+  frames_per_video: 10000  # Number of frames to select per video after variance filtering
+  n_clusters: 1000  # Number of clusters for 3D pose clustering
   min_frames_per_video: 0  # Minimum frames to select per video
   use_posterior_variance: true  # Use posterior variance instead of ensemble variance
 
   # Use random selection instead of variance filtering just to validate the pipeline
-  use_random_selection: false   
+  use_random_selection: true   
   n_random_frames: 3000
   # Frame extraction settings
   extract_frames: true  # Whether to extract video frames

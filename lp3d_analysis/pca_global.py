@@ -5,13 +5,48 @@ import numpy as np
 import pandas as pd
 import pickle 
 
-from eks.core import backward_pass, compute_initial_guesses, compute_nll, ensemble, forward_pass
-from eks.ibl_paw_multiview_smoother import pca, remove_camera_means
+# from eks.core import backward_pass, compute_initial_guesses, compute_nll, ensemble, forward_pass
+# from eks.ibl_paw_multiview_smoother import pca, remove_camera_means
 from eks.stats import compute_mahalanobis
-from eks.multicam_smoother import multicam_optimize_smooth, inflate_variance, make_dlc_pandas_index 
-from lightning_pose.utils.pca import  NaNPCA 
+# from eks.multicam_smoother import multicam_optimize_smooth, inflate_variance, make_dlc_pandas_index 
+from lightning_pose.utils.pca import NaNPCA
 
 from sklearn.decomposition import FactorAnalysis
+
+
+class NaNPCA2(NaNPCA):
+    """
+    NaNPCA subclass with a custom transform that handles NaN values per sample.
+    Uses a diagonal covariance (1 for valid, 0 for NaN) for posterior mean computation.
+    """
+
+    def transform(self, X):
+        is_valid = ~np.isnan(X)
+
+        if self.mean_ is not None:
+            X = X - self.mean_
+
+        X_ = X.copy()
+        X_[~is_valid] = 0
+
+        X_transformed = np.zeros((X_.shape[0], self.n_components_))
+        W = self.components_.T
+        for i in range(X_.shape[0]):
+            if is_valid[i].sum() == 0:
+                X_transformed[i] = 0
+            else:
+                try:
+                    cov_mat = np.diag(1.0 * is_valid[i])
+                    B = np.linalg.inv(W.T @ cov_mat @ W)
+                    z_hat = B @ W.T @ cov_mat @ X_[i]  # compute posterior mean
+                    X_transformed[i] = z_hat
+                except Exception:
+                    X_transformed[i] = 0
+
+        if self.whiten:
+            X_transformed /= np.sqrt(self.explained_variance_)
+
+        return X_transformed
 
 
 class EnhancedFactorAnalysis(FactorAnalysis):

@@ -43,7 +43,7 @@ plot_colors = {
     'eks_multiview_quantile_100':  'teal', 
     'eks_multiview_varinf_quantile_100': 'blue',
 
-    'ens_med_anipose':  'blue',
+    'ens_med_anipose':  'orange',
     'eks_multiview_videos_new':  'purple',
     
     # 'eks_multiview_postpred_3pcs_old': 'lightcoral',

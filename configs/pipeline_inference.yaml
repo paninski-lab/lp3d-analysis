@@ -15,9 +15,10 @@ lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/conf
 pipeline_seeds: 0
 
 outputs_dir: /teamspace/studios/this_studio/outputs/${dataset_name}
+# outputs_dir: /teamspace/lightning_storage/Nature_results/outputs/${dataset_name}
 
 
-intermediate_results_dir: test_100_MVT_patch_masking
+intermediate_results_dir: test_255_MVT_3d_loss_patch_All_Frames
 # initial training of an ensemble of networks
 train_networks:
   # run this section?
@@ -39,15 +40,15 @@ train_networks:
     
   # number of ground truth labels for training
   n_hand_labels: 
-    - 100
+    - 255
   # model type
   model_types:
     # - supervised
     # - context
     # - semisupervised
     # - multiview_cnn
-    - multiview_transformer
-    # - mvt_3d_loss
+    # - multiview_transformer
+    - mvt_3d_loss
     # - mvt_heatmap_3d_loss
     # - mvt_semisupervised
     # - multiview_transformer_mhcrnn
@@ -85,7 +86,9 @@ post_processing_labels:
   eks_multiview:
     run: False
     overwrite: False
+    n_latent: 6
     non_linear: True  # If True, uses nonlinear EKS with calibration files from data_dir/calibrations/{session}.toml. If False, uses linear EKS.
+    output_folder_name: non_linear_eks_varinf # Custom output folder name (e.g., 'non_linear_eks'). If null, uses mode name.
   ensemble_mean:
     run: False
     overwrite: False
@@ -100,15 +103,19 @@ post_processing_labeled_frames:
   modes:
     # - eks_singleview
     # - eks_multiview
-    # - ensemble_median
+    - ensemble_median
     # - ensemble_mean
+    - non_linear_eks_varinf
+    # - eks_multiview_varinf
+    # - non_linear_eks
 
 post_processing_videos:
   eks_multiview:
     run: False
     overwrite: False
     n_latent: 3 # components for pca object - 6 for chickadee and 3 for fly and mouse 
-    non_linear: False  # If True, uses nonlinear EKS with calibration files from data_dir/calibrations/{session}.toml. If False, uses linear EKS.
+    non_linear: True  # If True, uses nonlinear EKS with calibration files from data_dir/calibrations/{session}.toml. If False, uses linear EKS.
+    output_folder_name: non_linear_eks_varinf  # Custom output folder name (e.g., 'non_linear_eks'). If null, uses mode name.
   eks_singleview:
     run: False
     overwrite: False

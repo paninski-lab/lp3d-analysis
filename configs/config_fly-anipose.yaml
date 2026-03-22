@@ -253,8 +253,8 @@ losses:
   #   # parameter takes precedence over `empirical_epsilon_percentile`
   #   epsilon: null
 
-  supervised_reprojection_heatmap_mse:
-    log_weight: 1.0
+  # supervised_reprojection_heatmap_mse:
+  #   log_weight: 2.0
 
 
 eval:

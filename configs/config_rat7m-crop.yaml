@@ -4,11 +4,14 @@ data:
     height: 256
     width: 256
   # ABSOLUTE path to data directory
-  data_dir: /teamspace/studios/data/rat7m-crop
+  # data_dir: /teamspace/studios/data/rat7m-crop
+  data_dir: /teamspace/lightning_storage/rat-data/rat-7m
   # ABSOLUTE path to unlabeled videos' directory
-  video_dir: /teamspace/studios/data/rat7m-crop/videos
+  # video_dir: /teamspace/studios/data/rat7m-crop/videos
+  video_dir: /teamspace/lightning_storage/rat-data/rat-7m/videos
   # location of labels; for example script, this should be relative to `data_dir`
-  camera_params_file: /teamspace/studios/data/rat7m-crop/calibrations.csv
+  # camera_params_file: /teamspace/studios/data/rat7m-crop/calibrations.csv
+  camera_params_file: /teamspace/lightning_storage/rat-data/rat-7m/calibrations.csv
   # camera parameter file location
 
   csv_file:
@@ -113,7 +116,7 @@ training:
   # batch size of labeled data during validation
   val_batch_size: 48
   # batch size of labeled data during test
-  test_batch_size: 48
+  test_batch_size: 1
   # fraction of labeled data used for training
   train_prob: 0.95
   # fraction of labeled data used for validation (remaining used for test)
@@ -153,6 +156,14 @@ training:
       gamma: 0.5
   uniform_heatmaps_for_nan_keypoints: true
 
+# curriculum learning configuration for patch masking
+  patch_mask:
+    init_step: 700 # try in general 700
+    final_step: 5000
+    init_ratio: 0.1
+    final_ratio: 0.5 # to disable patch masking set to 0.0
+
+
 model:
   # list of unsupervised losses
   # "pca_singleview" | "pca_multiview" | "temporal" | "unimodal_mse" | "unimodal_kl"
@@ -173,18 +184,7 @@ model:
   # tt expt name
   model_name: test_model
   
-  # curriculum learning configuration for multiview transformer models
-  curriculum_learning:
-    # Type of masking to apply: "view" | "patch" | "none"
-    masking_type: patch
-    # Total steps for curriculum learning (when masking reaches maximum)
-    curriculum_steps: 5000
-    # Steps to wait after backbone unfreezing before starting patch masking
-    patch_masking_delay: 300
-    # Initial masking ratio (starts at this value)
-    initial_mask_ratio: 0.1
-    # Maximum masking ratio (reaches this value at curriculum_steps)
-    max_mask_ratio: 0.5
+ 
 
 # Latent models configuration for post-processing and usage of EKS multiview - Optional 
 latent_models:
@@ -237,12 +237,17 @@ losses:
     # (in prob; heatmaps with max prob values are removed)
     prob_threshold: 0.05
   
-  supervised_pairwise_projections:
-    # weight in front of pairwise projection loss
-    log_weight: 8.0
-    # absolute error (in pixels) below which pairwise projection loss is zeroed out; if not null, this
-    # parameter takes precedence over `empirical_epsilon_percentile`
-    epsilon: null
+  # supervised_pairwise_projections:
+  #   # weight in front of pairwise projection loss
+  #   log_weight: 3.5
+  #   # absolute error (in pixels) below which pairwise projection loss is zeroed out; if not null, this
+  #   # parameter takes precedence over `empirical_epsilon_percentile`
+  #   epsilon: null
+
+  # supervised_pairwise_projections:
+  #   log_weight: null
+  supervised_reprojection_heatmap_mse:
+    log_weight: 1.0
 
 eval:
   # predict? used in scripts/train_hydra.py
