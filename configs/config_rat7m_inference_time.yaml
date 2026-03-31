@@ -1,0 +1,189 @@
+# Rat7M-crop data paths + bboxes, with training/model/dataloader settings aligned to
+# config_chickadee_inference_time.yaml for comparable GPU timing benchmarks.
+# Reprojection loss weights (`supervised_reprojection_heatmap_mse`) and patch curriculum still
+# come from --reference-config (default with --preset rat7m: config_rat7m-crop.yaml).
+data:
+  image_resize_dims:
+    height: 256
+    width: 256
+  data_dir: /teamspace/lightning_storage/rat-data/rat-7m
+  video_dir: /teamspace/lightning_storage/rat-data/rat-7m/videos
+  camera_params_file: /teamspace/lightning_storage/rat-data/rat-7m/calibrations.csv
+
+  csv_file:
+    - CollectedData_camera1.csv
+    - CollectedData_camera2.csv
+    - CollectedData_camera3.csv
+    - CollectedData_camera4.csv
+    - CollectedData_camera5.csv
+    - CollectedData_camera6.csv
+
+  # Optional: per-view bbox CSVs under data_dir (same order as csv_file). Omit if not present;
+  # MultiviewHeatmapDataset then uses full frames (see lightning_pose MultiviewHeatmapDataset).
+  # bbox_file:
+  #   - bboxes_camera1.csv
+  #   - ...
+
+  view_names:
+    - camera1
+    - camera2
+    - camera3
+    - camera4
+    - camera5
+    - camera6
+
+  downsample_factor: 2
+  num_keypoints: 15
+  keypoint_names:
+    - SpineF
+    - SpineM
+    - SpineL
+    - HipL
+    - HipR
+    - ElbowL
+    - ArmL
+    - ShoulderL
+    - ShoulderR
+    - ElbowR
+    - ArmR
+    - KneeR
+    - KneeL
+    - ShinL
+    - ShinR
+  mirrored_column_matches: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+  columns_for_singleview_pca: []
+
+  skeleton:
+    - ['SpineF', 'SpineM']
+    - ['SpineM', 'SpineL']
+    - ['SpineF', 'ShoulderL']
+    - ['ShoulderL', 'ElbowL']
+    - ['ElbowL', 'ArmL']
+    - ['SpineF', 'ShoulderR']
+    - ['ShoulderR', 'ElbowR']
+    - ['ElbowR', 'ArmR']
+    - ['SpineL', 'HipL']
+    - ['HipL', 'KneeL']
+    - ['KneeL', 'ShinL']
+    - ['SpineL', 'HipR']
+    - ['HipR', 'KneeR']
+    - ['KneeR', 'ShinR']
+
+  skeleton_colors:
+    SpineF-SpineM: darkred
+    SpineM-SpineL: darkred
+    SpineF-ShoulderL: yellow
+    ShoulderL-ElbowL: yellow
+    ElbowL-ArmL: yellow
+    SpineF-ShoulderR: limegreen
+    ShoulderR-ElbowR: limegreen
+    ElbowR-ArmR: limegreen
+    SpineL-HipL: dodgerblue
+    HipL-KneeL: dodgerblue
+    KneeL-ShinL: dodgerblue
+    SpineL-HipR: darkblue
+    HipR-KneeR: darkblue
+    KneeR-ShinR: darkblue
+
+training:
+  imgaug: dlc
+  imgaug_3d: True
+  train_batch_size: 8
+  val_batch_size: 16
+  test_batch_size: 1
+  train_prob: 0.95
+  val_prob: 0.05
+  train_frames: 1
+  num_gpus: 1
+  num_workers: 4
+  early_stop_patience: 3
+  unfreezing_epoch: 20
+  min_epochs: 300
+  max_epochs: 300
+  log_every_n_steps: 10
+  check_val_every_n_epoch: 5
+  rng_seed_data_pt: 0
+  rng_seed_model_pt: 0
+  optimizer: Adam
+  optimizer_params:
+    learning_rate: 0.00005
+  lr_scheduler: multisteplr
+  lr_scheduler_params:
+    multisteplr:
+      milestones: [2000, 3000, 4000]
+      gamma: 0.5
+  uniform_heatmaps_for_nan_keypoints: true
+
+  patch_mask:
+    init_step: 0
+    final_step: 5000
+    init_ratio: 0.1
+    final_ratio: 0.1
+
+model:
+  losses_to_use: []
+  backbone: vitb_dino
+  model_type: heatmap_multiview_transformer
+  head: heatmap_cnn
+  heatmap_loss_type: mse
+  model_name: test_model
+
+latent_models:
+  pca_model_path: null
+  fa_model_path: null
+
+dali:
+  general:
+    seed: 123456
+  base:
+    train:
+      sequence_length: 8
+    predict:
+      sequence_length: 16
+  context:
+    train:
+      batch_size: 16
+    predict:
+      sequence_length: 96
+
+losses:
+  pca_multiview:
+    log_weight: 5.0
+    components_to_keep: 3
+    epsilon: null
+  pca_singleview:
+    log_weight: 5.0
+    components_to_keep: 0.99
+    epsilon: null
+  temporal:
+    log_weight: 5.0
+    epsilon: 20.0
+    prob_threshold: 0.05
+
+  supervised_pairwise_projections:
+    log_weight: 0.3
+    epsilon: null
+
+eval:
+  predict_vids_after_training: true
+  test_videos_directory: ${data.video_dir}
+  save_vids_after_training: false
+  colormap: "cool"
+  confidence_thresh_for_vid: 0.90
+  hydra_paths: [" "]
+
+  fiftyone:
+    dataset_name: test
+    model_display_names: ["test_model"]
+    launch_app_from_script: false
+    remote: true
+    address: 127.0.0.1
+    port: 5151
+
+callbacks:
+  anneal_weight:
+    attr_name: total_unsupervised_importance
+    init_val: 0.0
+    increase_factor: 0.01
+    final_val: 1.0
+    freeze_until_epoch: 0

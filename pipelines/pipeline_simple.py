@@ -53,6 +53,23 @@ VALID_MODEL_TYPES = [
 ]
 
 
+def _model_losses_to_use_from_cfg(cfg_lp, default_if_empty: list | None = None) -> list:
+    """Resolve ``model.losses_to_use`` when applying pipeline overrides.
+
+    If the base Lightning Pose config lists unsupervised losses, that list is used
+    (semi-supervised: ``UnlabeledDataModule`` + ``SemiSupervisedHeatmapTracker*``).
+    If the list is empty or missing, ``default_if_empty`` is used — e.g. ``[]`` for
+    supervised-only, or ``[\"pca_multiview\"]`` for pipeline types that default to PCA.
+    """
+    raw = cfg_lp.model.get("losses_to_use", None)
+    if raw is None:
+        return list(default_if_empty) if default_if_empty is not None else []
+    raw_list = [x for x in list(raw) if x is not None and str(x).strip() != ""]
+    if len(raw_list) == 0:
+        return list(default_if_empty) if default_if_empty is not None else []
+    return raw_list
+
+
 def pipeline(config_file: str, for_seed: int | None = None) -> None:
 
     # -------------------------------------------
@@ -314,10 +331,13 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
             
         })
     elif model_type == 'multiview_transformer':
+        # Honor ``losses_to_use`` from the LP yaml (e.g. ``[pca_multiview]`` for chickadee).
+        # Empty list in the base config keeps fully supervised training.
+        losses_to_use = _model_losses_to_use_from_cfg(cfg_lp, default_if_empty=[])
         cfg_overrides.append({
             "model": {
                 "model_type": "heatmap_multiview_transformer",
-                "losses_to_use": [],
+                "losses_to_use": losses_to_use,
                 "head": "heatmap_cnn"
             },
             
@@ -343,19 +363,25 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
         })
         
     elif model_type == 'mvt_unsupervised_losses':
+        losses_to_use = _model_losses_to_use_from_cfg(
+            cfg_lp, default_if_empty=["pca_multiview"]
+        )
         cfg_overrides.append({
             "model": {
                 "model_type": "heatmap_multiview_transformer",
-                "losses_to_use": ["pca_multiview"],
+                "losses_to_use": losses_to_use,
                 "head": "heatmap_cnn"
             },
         })
 
     elif model_type == 'mvt_semisupervised':
+        losses_to_use = _model_losses_to_use_from_cfg(
+            cfg_lp, default_if_empty=["pca_multiview"]
+        )
         cfg_overrides.append({
             "model": {
                 "model_type": "heatmap_multiview_transformer",
-                "losses_to_use": ["pca_multiview"],  # Only PCA multiview loss
+                "losses_to_use": losses_to_use,
                 "head": "heatmap_cnn"  # Use heatmap_cnn head
             },
             "data": {
@@ -385,10 +411,13 @@ def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_se
             },
         })
     elif model_type == 'mvt_transformer_mhcrnn_semisupervised':
+        losses_to_use = _model_losses_to_use_from_cfg(
+            cfg_lp, default_if_empty=["pca_multiview"]
+        )
         cfg_overrides.append({
             "model": {
                 "model_type": "heatmap_multiview_transformer_mhcrnn",
-                "losses_to_use": ["pca_multiview"],  # Only PCA multiview loss
+                "losses_to_use": losses_to_use,
                 "head": "heatmap_mhcrnn"
             },
             "data": {

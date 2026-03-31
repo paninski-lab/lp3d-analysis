@@ -889,7 +889,7 @@ def run_eks_multiview(
         quantile_keep_pca= quantile_keep_pca, 
         camera_names = views,
         # s_frames = [(None,None)], # Keemin wil fix 
-        s_frames = [(0,1800)], # used to have 10000 
+        s_frames = [(0,400)], # used to have 10000 
         avg_mode = avg_mode,
         var_mode = var_mode,
         inflate_vars = True,

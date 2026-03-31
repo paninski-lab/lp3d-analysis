@@ -215,7 +215,9 @@ def process_view_data(ground_truth_csv, view_data, view_name, keypoints_to_use=N
         
         print(f"Loading predictions from {pred_csv}")
         # Load prediction data
-        raw_df_pred = pd.read_csv(pred_csv, header=[0, 1, 2], index_col=0).sort_index()
+        raw_df_pred = pd.read_csv(pred_csv, header=[0, 1, 2], index_col=0)
+        raw_df_pred = io_utils.fix_empty_first_row(raw_df_pred)
+        raw_df_pred.sort_index(inplace=True)
         
         # Filter out sessions to ignore
         if sessions_to_ignore:
@@ -560,7 +562,7 @@ def save_plots(fig, output_dir, filename="pixel_error_vs_ensemble_std"):
     print(f"Plot saved to: {filepath}")
 
 
-def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, percentiles=[95, 50, 5], figsize = (5,7), dataset_name = 'fly-anipose',std_vals = np.arange(0, 8, 0.2), ylim=None):
+def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, percentiles=[95, 50, 5], figsize = (5,7), dataset_name = 'fly-anipose',std_vals = np.arange(0, 20, 0.5), ylim=None):
     """
     Create a single plot that combines data across views for the same model type.
     
@@ -623,7 +625,7 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
         'v0_5k_128': '#7f7f7f',   # Middle Gray
         'v1_5k_128': '#d62728',   # Brick Red
         'v2_5k_128': 'gray',   # Muted Blue
-        'v3_5k_128': '#ff7f0e',   # Safety Orange
+        'v3_5k_128': 'orange',   # Safety Orange
         'v4_5k_128': 'orange' , # strong yellow    
         'v5_5k_128': '#9467bd',   # Muted Purple
         # 'v6_5k_128': '#e377c2',  #'#8c564b',   # Chestnut Brown #8c564b --> this is for the case we don't compare 3d aug and dlc
@@ -646,7 +648,7 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
         'v23_5k_128': 'purple',
         'v24_5k_128': 'blue',
         'v25_5k_128': '#ff9896',
-        'v26_5k_128': 'pink',
+        'v26_5k_128': 'orange',
         'v27_5k_128': 'purple',
         'v28_5k_128': 'lightseagreen',
         # 'v29_5k_128': 'green',
@@ -697,6 +699,9 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
         'v102_5k_128': 'red',
         'v103_5k_128': 'green',
         'v104_5k_128': 'brown',
+
+        'v200_5k_128': 'steelblue',
+        'v201_5k_128': 'gray',
         
         
         'v0_5k_128_non_linear_eks': 'green',
@@ -716,6 +721,7 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
         'v0_5k_128_eks_multiview_resnet50.0': 'green',
         'v0_5k_128_ensemble_median_resnet50.0': 'red',
         'v0_5k_128_resnet50_anipose.0': 'gray',
+        'v0_5k_128_dlc_anipose.0': 'orange',
     }
 
 
@@ -724,6 +730,7 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
             'v0_5k_128': 'SV_resnet50_3d',
             'v1_5k_128': 'SV_resnet50_dlc-mv',
             'v2_5k_128': 'SV_resnet50_dlc',
+            'v3_5k_128_dlc': 'DLC',
             
             'v4_5k_128': 'MVT_imagenet', 
             'v5_5k_128': 'MVT-dino-dlc-patch-mask',
@@ -748,11 +755,11 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
             'v21_5k_128': 'MVT_3d_loss(2)',
 
             'v22_5k_128': 'MVT_3d_loss_view_mask',
-            'v23_5k_128': 'MVT_3d_loss_patch_mask',
+            'v23_5k_128': 'LP3D',
             # 'v23_5k_128': 'MVT_patch_mask_3d',
             'v24_5k_128': 'MVT_view_mask',
             'v25_5k_128': 'MVT_patch_mask',
-            'v26_5k_128': 'MVT_3d_loss_patch_mask_Matt_fix',
+            'v26_5k_128': 'DANNCE',
             'v27_5k_128': 'MVT_dlc_patch_mask',
 
             'v80_5k_128': 'MVT_dlc_patch_mask_dinov2',
@@ -807,6 +814,9 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
             'v110_5k_128': 'MVT distilled (3325)',
             'v111_5k_128': 'MVT distilled (1235)',
 
+            'v200_5k_128': 'MVT (vitb_dinov3)',
+            'v201_5k_128': 'LP3D (vitb_dinov3)',
+
             
 
             # 'v5_5k_128': 'Model Try',
@@ -836,11 +846,13 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
 
             'v0_5k_128_eks_multiview_resnet50.0': 'EKS Multi-View Resnet50',
             'v0_5k_128_ensemble_median_resnet50.0': 'Ensemble Median Resnet50',
+            'v0_5k_128_dlc_anipose.0': 'DLC (Median) + Triangulation',
         }
     
     if dataset_name == 'mirror-mouse-separate':
         custom_labels = {
             'v2_5k_128': 'SV_resnet50_dlc',
+            'v3_5k_128_dlc': 'DLC',
             'v7_5k_128': 'MVT-dino-dlc',
             'v8_5k_128': 'SV_vits_dino',
 
@@ -856,7 +868,7 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
 
 
             'v22_5k_128': 'MVT_dlc_view_mask',
-            'v23_5k_128': 'MVT_dlc_patch_mask',
+            'v23_5k_128': 'LP3D',
             'v26_5k_128': 'MVT_distil_1239_patch_mask',
             'v28_5k_128': 'MVT_distil_3239_patch_mask',
             'v30_5k_128': 'SV_vitb_dino',
