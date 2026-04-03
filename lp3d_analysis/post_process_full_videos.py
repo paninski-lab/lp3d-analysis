@@ -216,7 +216,7 @@ def process_ensemble_frames(
     
     stacked_arrays = np.stack(stacked_arrays, axis=-1)
     
-    if mode in ['ensemble_mean', 'ensemble_median']:
+    if mode in ['ensemble_mean', 'ensemble_median', 'ensemble_median_2d_filters', 'ensemble_median_temporal', 'ensemble_median_spatial', 'ensemble_median_spatiotemporal', 'ensemble_median_2d_filters_updated', 'ensemble_median_2d_filters_paper', 'ensemble_median_temporal_paper', 'ensemble_median_spatial_paper', 'ensemble_median_spatiotemporal_paper']:
         # Process with ensemble
         stacked_arrays_reshaped = stacked_arrays.transpose(2, 0, 1)  # (5, 601, 90)
         stacked_arrays_reshaped = input_dfs_to_markerArray([stacked_dfs], keypoint_names, camera_names=[""])
@@ -286,7 +286,8 @@ def process_multiple_video_single_view(
             camera_names=None,
         )
         
-        if mode in ['ensemble_mean', 'ensemble_median']:
+        if mode in ['ensemble_mean', 'ensemble_median', 'ensemble_median_2d_filters', 'ensemble_median_temporal', 'ensemble_median_spatial', 'ensemble_median_spatiotemporal', 'ensemble_median_2d_filters_updated'
+        'ensemble_median_2d_filters_paper', 'ensemble_median_temporal_paper', 'ensemble_median_spatial_paper', 'ensemble_median_spatiotemporal_paper']:
             results_df = process_ensemble_frames(pred_files, keypoint_names, mode=mode)
         elif mode == 'eks_singleview':
             results_df = run_eks_singleview(
@@ -309,7 +310,7 @@ def post_process_ensemble_videos(
     n_labels: int,
     seed_range: tuple[int, int],
     views: List[str], 
-    mode: Literal['ensemble_mean', 'ensemble_median', 'eks_singleview', 'eks_multiview'],
+    mode: Literal['ensemble_mean', 'ensemble_median', 'ensemble_median_2d_filters', 'ensemble_median_temporal', 'ensemble_median_spatial', 'ensemble_median_spatiotemporal', 'ensemble_median_2d_filters_updated', 'eks_singleview', 'eks_multiview'],
     inference_dirs: List[str],
     overwrite: bool,
     n_latent: int = 3,
@@ -697,7 +698,7 @@ def extract_labeled_frame_predictions(
         n_labels: Number of labels used for training
         seed_range: Range of seeds used (e.g., (0, 4))
         views: List of camera view names
-        mode: Processing method ('ensemble_mean', 'ensemble_median', 'eks_singleview', 'eks_multiview')
+        mode: Processing method ('ensemble_mean', 'ensemble_median', 'ensemble_median_2d_filters', 'ensemble_median_temporal', 'ensemble_median_spatial', 'ensemble_median_spatiotemporal', 'ensemble_median_2d_filters_updated', 'eks_singleview', 'eks_multiview')
         inference_dir: Name of the directory containing video predictions (default: "videos_new")
         overwrite: Whether to overwrite existing files
     """
@@ -892,7 +893,7 @@ def run_eks_multiview(
         s_frames = [(0,400)], # used to have 10000 
         avg_mode = avg_mode,
         var_mode = var_mode,
-        inflate_vars = True,
+        inflate_vars = False,
         inflate_vars_kwargs = inflate_vars_kwargs,
         n_latent = n_latent,
         verbose = verbose,

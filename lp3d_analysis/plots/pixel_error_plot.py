@@ -722,6 +722,18 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
         'v0_5k_128_ensemble_median_resnet50.0': 'red',
         'v0_5k_128_resnet50_anipose.0': 'gray',
         'v0_5k_128_dlc_anipose.0': 'orange',
+        'v0_5k_128_ensemble_median_2d_filters': 'orange',
+        'v0_5k_128_ensemble_median_temporal': 'brown',
+        'v0_5k_128_ensemble_median_spatial': 'pink',
+        'v0_5k_128_ensemble_median_spatiotemporal': 'blue',
+        'v0_5k_128_ensemble_median_2d_filters_updated': 'lightcoral',
+        'v0_5k_128_non_linear_eks_geometric': 'darkgreen',
+        'v0_5k_128_ensemble_median_2d_filters.0': 'orange',
+        'v0_5k_128_ensemble_median_temporal.0': 'brown',
+        'v0_5k_128_ensemble_median_spatial.0': 'pink',
+        'v0_5k_128_ensemble_median_spatiotemporal.0': 'blue',
+        'v0_5k_128_ensemble_median_2d_filters_updated.0': 'lightcoral',
+        'v0_5k_128_non_linear_eks_geometric.0': 'darkgreen',
     }
 
 
@@ -847,6 +859,12 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
             'v0_5k_128_eks_multiview_resnet50.0': 'EKS Multi-View Resnet50',
             'v0_5k_128_ensemble_median_resnet50.0': 'Ensemble Median Resnet50',
             'v0_5k_128_dlc_anipose.0': 'DLC (Median) + Triangulation',
+            'v0_5k_128_ensemble_median_2d_filters.0': 'Ensemble Median 2D Filters',
+            'v0_5k_128_ensemble_median_temporal.0': 'Ensemble Median Temporal',
+            'v0_5k_128_ensemble_median_spatial.0': 'Ensemble Median Spatial',
+            'v0_5k_128_ensemble_median_spatiotemporal.0': 'Ensemble Median Spatiotemporal',
+            'v0_5k_128_ensemble_median_2d_filters_updated.0': 'Ensemble Median All 2D Filters',
+            'v0_5k_128_non_linear_eks_geometric.0': 'Non-linear EKS Geometric',
         }
     
     if dataset_name == 'mirror-mouse-separate':

@@ -2,7 +2,8 @@
 # ask Matt about adding the views variable to the config file so we can pick the views that we have and in that way instead of iterating over files we will iterate over views - which will determine things
 
 # dataset_name: chickadee-crop
-dataset_name: fly-anipose
+# dataset_name: fly-anipose
+dataset_name: cheese-3d
 # dataset_name: mirror-mouse-separate
 # dataset_name: ibl-mouse
 # dataset_name: rat7m-crop
@@ -15,10 +16,10 @@ lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/conf
 pipeline_seeds: 0
 
 outputs_dir: /teamspace/studios/this_studio/outputs/${dataset_name}
-# outputs_dir: /teamspace/lightning_storage/Nature_results/outputs/${dataset_name}
+# outputs_dir: /teamspace/lightning_storage/cheese-3d_results/outputs/${dataset_name}
 
 
-intermediate_results_dir: test_200_multiview_resnet50
+intermediate_results_dir: SVT_vitb_dinov2
 # initial training of an ensemble of networks
 train_networks:
   # run this section?
@@ -40,7 +41,7 @@ train_networks:
     
   # number of ground truth labels for training
   n_hand_labels: 
-    - 200
+    - 665
   # model type
   model_types:
     - supervised
@@ -56,9 +57,9 @@ train_networks:
     # - mvt_context
      
   # run inference on videos in these directories (independent of training videos)
-  inference_dirs: 
+  inference_dirs: []
   # []
-    - videos_new # OOD videos
+    # - videos_new # OOD videos
     # - videos_new_segmentation # OOD videos
     # - videos_new_add # OOD videos
     # - videos  # InD videos
@@ -99,29 +100,38 @@ post_processing_labels:
 
 # post-processing options - coming from the full videos - this is if we extract from the full videos - for the fly 
 post_processing_labeled_frames:
-  run : True
+  run : False
   overwrite: False
   modes:
     # - eks_singleview
     # - eks_multiview
     # - ensemble_median
     # - ensemble_mean
-    - non_linear_eks_varinf
+    # - non_linear_eks_varinf
+    # - ensemble_median_2d_filters
+    # - ensemble_median_temporal
+    # - ensemble_median_spatial
+    # - ensemble_median_spatiotemporal
+    # - ensemble_median_2d_filters_paper
+    # - ensemble_median_temporal_paper
+    # - ensemble_median_spatial_paper
+    # - ensemble_median_spatiotemporal_paper
     # - eks_multiview_varinf
-    # - non_linear_eks
+    - non_linear_eks
 
 post_processing_videos:
   eks_multiview:
-    run: True
+    run: False
     overwrite: False
     n_latent: 3 # components for pca object - 6 for chickadee and 3 for fly and mouse 
     non_linear: True  # If True, uses nonlinear EKS with calibration files from data_dir/calibrations/{session}.toml. If False, uses linear EKS.
-    output_folder_name: non_linear_eks_varinf  # Custom output folder name (e.g., 'non_linear_eks'). If null, uses mode name.
+    output_folder_name: non_linear_eks  # Custom output folder name (e.g., 'non_linear_eks'). If null, uses mode name.
   eks_singleview:
     run: False
     overwrite: False
   ensemble_median:
     run: False
+    overwrite: False
     overwrite: False
   ensemble_mean:
     run: False

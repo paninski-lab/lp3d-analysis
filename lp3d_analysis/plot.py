@@ -15,6 +15,14 @@ plot_colors = {
     # 'rngs': 'red',
     'rngs': 'gray', # in general gray
     'ensemble_median': 'orange',
+    'ensemble_median_2d_filters': 'orange',
+    'ensemble_median_temporal': 'brown',
+    'ensemble_median_spatial': 'pink',
+    'ensemble_median_spatiotemporal': 'blue',
+    'ensemble_median_2d_filters_updated': 'lightcoral',
+    'non_linear_eks_geometric': 'darkgreen',
+
+
     'ensemble_mean': 'purple',
     'ensemble_variance': 'brown',
     'labels': '#FFD700', #(Bright Gold)
