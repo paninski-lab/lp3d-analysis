@@ -39,6 +39,7 @@ plot_colors = {
     'eks_multiview_varinf_no_object':  'teal',
     'non_linear_eks': 'green',
     'non_linear_eks_varinf': 'lightgreen',
+    
 
 
 

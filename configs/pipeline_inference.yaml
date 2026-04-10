@@ -2,8 +2,8 @@
 # ask Matt about adding the views variable to the config file so we can pick the views that we have and in that way instead of iterating over files we will iterate over views - which will determine things
 
 # dataset_name: chickadee-crop
-# dataset_name: fly-anipose
-dataset_name: cheese-3d
+dataset_name: fly-anipose
+# dataset_name: cheese-3d
 # dataset_name: mirror-mouse-separate
 # dataset_name: ibl-mouse
 # dataset_name: rat7m-crop
@@ -57,12 +57,13 @@ train_networks:
     # - mvt_context
      
   # run inference on videos in these directories (independent of training videos)
-  inference_dirs: []
+  inference_dirs: 
   # []
     # - videos_new # OOD videos
     # - videos_new_segmentation # OOD videos
     # - videos_new_add # OOD videos
-    # - videos  # InD videos
+    - videos  # InD videos
+    - videos_new # OOD videos
     # - videos_fix
     # - videos_new_fix # for chickadee
     # - videos-for-each-labeled-frame
@@ -117,11 +118,11 @@ post_processing_labeled_frames:
     # - ensemble_median_spatial_paper
     # - ensemble_median_spatiotemporal_paper
     # - eks_multiview_varinf
-    - non_linear_eks
+    # - non_linear_eks
 
 post_processing_videos:
   eks_multiview:
-    run: False
+    run: True
     overwrite: False
     n_latent: 3 # components for pca object - 6 for chickadee and 3 for fly and mouse 
     non_linear: True  # If True, uses nonlinear EKS with calibration files from data_dir/calibrations/{session}.toml. If False, uses linear EKS.

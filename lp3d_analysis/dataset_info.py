@@ -483,4 +483,117 @@ dataset_info = {
         'crop_size': None,  # (width, height)
     },
 
+    'cheese-3d': {
+        'cam_names': [],  # to be filled in
+        # Order matches CollectedData.csv bodyparts row (column order)
+        'keypoints': [
+            'ref(head-post)',      # 0
+            'lowerlip',            # 1
+            'upperlip(left)',      # 2
+            'upperlip(right)',     # 3
+            'nose(bottom)',        # 4
+            'nose(tip)',           # 5
+            'nose(top)',           # 6
+            'eye(front)(left)',    # 7
+            'eye(top)(left)',      # 8
+            'eye(back)(left)',     # 9
+            'eye(bottom)(left)',   # 10
+            'ear(base)(left)',     # 11
+            'ear(top)(left)',      # 12
+            'ear(tip)(left)',      # 13
+            'ear(bottom)(left)',   # 14
+            'pad(top)(left)',      # 15
+            'pad(side)(left)',     # 16
+            'pad(center)',         # 17
+            'eye(front)(right)',   # 18
+            'eye(top)(right)',     # 19
+            'eye(back)(right)',    # 20
+            'eye(bottom)(right)',  # 21
+            'ear(base)(right)',    # 22
+            'ear(top)(right)',     # 23
+            'ear(tip)(right)',     # 24
+            'ear(bottom)(right)',  # 25
+            'pad(top)(right)',     # 26
+            'pad(side)(right)',    # 27
+        ],
+        'skeleton': np.array([
+            # nose center (line: bottom -> tip -> top, bridging to pad center)
+            [ 4,  5],  # nose(bottom) -> nose(tip)
+            [ 5,  6],  # nose(tip) -> nose(top)
+            [ 5, 17],  # nose(tip) -> pad(center)
+            # left nose pad (closed triangle)
+            [17, 15],  # pad(center) -> pad(top)(left)
+            [15, 16],  # pad(top)(left) -> pad(side)(left)
+            [16, 17],  # pad(side)(left) -> pad(center)
+            # right nose pad (closed triangle)
+            [17, 26],  # pad(center) -> pad(top)(right)
+            [26, 27],  # pad(top)(right) -> pad(side)(right)
+            [27, 17],  # pad(side)(right) -> pad(center)
+            # mouth (closed triangle)
+            [ 1,  2],  # lowerlip -> upperlip(left)
+            [ 2,  3],  # upperlip(left) -> upperlip(right)
+            [ 3,  1],  # upperlip(right) -> lowerlip
+            # left eye (closed quadrilateral)
+            [ 7,  8],  # eye(front)(left) -> eye(top)(left)
+            [ 8,  9],  # eye(top)(left) -> eye(back)(left)
+            [ 9, 10],  # eye(back)(left) -> eye(bottom)(left)
+            [10,  7],  # eye(bottom)(left) -> eye(front)(left)
+            # right eye (closed quadrilateral)
+            [18, 19],  # eye(front)(right) -> eye(top)(right)
+            [19, 20],  # eye(top)(right) -> eye(back)(right)
+            [20, 21],  # eye(back)(right) -> eye(bottom)(right)
+            [21, 18],  # eye(bottom)(right) -> eye(front)(right)
+            # left ear (closed quadrilateral)
+            [11, 12],  # ear(base)(left) -> ear(top)(left)
+            [12, 13],  # ear(top)(left) -> ear(tip)(left)
+            [13, 14],  # ear(tip)(left) -> ear(bottom)(left)
+            [14, 11],  # ear(bottom)(left) -> ear(base)(left)
+            # right ear (closed quadrilateral)
+            [22, 23],  # ear(base)(right) -> ear(top)(right)
+            [23, 24],  # ear(top)(right) -> ear(tip)(right)
+            [24, 25],  # ear(tip)(right) -> ear(bottom)(right)
+            [25, 22],  # ear(bottom)(right) -> ear(base)(right)
+        ]),
+        'skeleton_colors': [
+            # nose center
+            'dodgerblue',
+            'dodgerblue',
+            'dodgerblue',
+            # left nose pad
+            'limegreen',
+            'limegreen',
+            'limegreen',
+            # right nose pad
+            'darkgreen',
+            'darkgreen',
+            'darkgreen',
+            # mouth
+            'orange',
+            'orange',
+            'orange',
+            # left eye
+            'pink',
+            'pink',
+            'pink',
+            'pink',
+            # right eye
+            'pink',
+            'pink',
+            'pink',
+            'pink',
+            # left ear
+            'yellow',
+            'yellow',
+            'yellow',
+            'yellow',
+            # right ear
+            'yellow',
+            'yellow',
+            'yellow',
+            'yellow',
+        ],
+        'w3d': 0.15,  # scaling factor for crops
+        'crop_size': (256, 256),  # (width, height)
+    },
+
 }

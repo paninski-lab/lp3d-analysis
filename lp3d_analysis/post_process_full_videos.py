@@ -166,7 +166,7 @@ def _get_eks_calibration_file(session_name_or_dir: str, data_dir: str, views: Li
         Path to calibration TOML file, or None if not found
     """
     from lp3d_analysis.utils import extract_session_info, extract_sequence_name
-    
+
     # If it's a directory name (no .csv extension), use extract_sequence_name
     # Otherwise, use extract_session_info for filenames
     if session_name_or_dir.endswith('.csv'):
@@ -886,11 +886,11 @@ def run_eks_multiview(
     camera_dfs, smooth_params_final = ensemble_kalman_smoother_multicam(
         marker_array = marker_array,
         keypoint_names = keypoint_names,
-        smooth_param = None, # 10000, #None,
+        smooth_param = 1000, # 10000, #None,
         quantile_keep_pca= quantile_keep_pca, 
         camera_names = views,
         # s_frames = [(None,None)], # Keemin wil fix 
-        s_frames = [(0,400)], # used to have 10000 
+        s_frames = [(0,10)], # used to have 10000 
         avg_mode = avg_mode,
         var_mode = var_mode,
         inflate_vars = False,
