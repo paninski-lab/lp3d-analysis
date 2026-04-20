@@ -10,7 +10,7 @@ data:
   # video_dir: /teamspace/studios/data/ibl-mouse/videos
   video_dir: /teamspace/studios/data/ibl-mouse/videos
   # camera calibration files location
-  camera_params_file: /teamspace/studios/data/ibl-mouse/calibrations.csv
+  # camera_params_file: /teamspace/studios/data/ibl-mouse/calibrations.csv
   # camera_params_file: /teamspace/studios/this_studio/pseudo_labeled_dataset_IBL_3000_frames_random/ibl-mouse/calibrations.csv
   # location of labels; for example script, this should be relative to `data_dir`]
   csv_file:

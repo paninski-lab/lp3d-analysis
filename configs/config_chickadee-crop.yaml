@@ -185,7 +185,7 @@ training:
 model:
   # list of unsupervised losses
   # "pca_singleview" | "pca_multiview" | "temporal" | "unimodal_mse" | "unimodal_kl"
-  losses_to_use: ["pca_multiview"]
+  losses_to_use: []
   # backbone network:
   # resnet18 | resnet34 | resnet50 | resnet101 | resnet152 | resnet50_contrastive
   # resnet50_animalpose_apose | resnet50_animal_ap10k
@@ -254,7 +254,7 @@ losses:
   #   epsilon: null
   
   supervised_reprojection_heatmap_mse:
-    log_weight: 1.0
+    log_weight: 3.0
 
 eval:
   # predict? used in scripts/train_hydra.py
@@ -292,4 +292,4 @@ callbacks:
     increase_factor: 0.01
     final_val: 1.0
     # freeze_until_epoch: 0
-    freeze_until_epoch: 0
+    freeze_until_epoch: 60

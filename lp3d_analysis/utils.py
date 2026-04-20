@@ -641,10 +641,19 @@ def write_labeled_pixel_error_csv(
 
 
 def extract_session_info(filename: str, view_names: list[str]) -> tuple[str, str]:
-    """Extract session name and view from filename."""
+    """Extract session name and view from filename.
+
+    Matches views as underscore-delimited segments (e.g. '_TL_' or '_TL' at end)
+    and checks longer names first so 'TL' is never shadowed by 'L'.
+    """
     name = filename.replace('.csv', '')
-    view_name = next((view for view in view_names if view in name), name.split('_')[-1])
-    session_name = name.replace(f'_{view_name}', '')
+    # Sort longest-first so 'TL'/'TR'/'TC'/'BC' are checked before 'L'/'R'/'C'
+    sorted_views = sorted(view_names, key=len, reverse=True)
+    view_name = next(
+        (v for v in sorted_views if f'_{v}_' in name or name.endswith(f'_{v}')),
+        name.split('_')[-1]
+    )
+    session_name = name.replace(f'_{view_name}', '', 1)
     return session_name, view_name
 
 
@@ -843,15 +852,18 @@ def find_prediction_files(base_dir: str, view: str) -> List[str]:
 def extract_session_info(filename: str, views: List[str]) -> Tuple[str, str]:
     """
     Extract session name and view from filename.
+
+    Matches views as underscore-delimited segments (e.g. '_TL_' or '_TL' at end)
+    and checks longer names first so 'TL' is never shadowed by 'L'.
     """
     name = filename.replace('.csv', '')
-    
-    # Find matching view name
-    view_name = next((view for view in views if view in name), name.split('_')[-1])
-    
-    # Remove view name to get session name
-    session_name = name.replace(f'_{view_name}', '')
-    
+    # Sort longest-first so 'TL'/'TR'/'TC'/'BC' are checked before 'L'/'R'/'C'
+    sorted_views = sorted(views, key=len, reverse=True)
+    view_name = next(
+        (v for v in sorted_views if f'_{v}_' in name or name.endswith(f'_{v}')),
+        name.split('_')[-1]
+    )
+    session_name = name.replace(f'_{view_name}', '', 1)
     return session_name, view_name
 
 

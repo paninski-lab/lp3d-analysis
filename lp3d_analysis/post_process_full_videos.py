@@ -1,16 +1,10 @@
 import os
-# Configure JAX memory settings before any JAX imports to prevent segmentation faults
-# These settings help prevent "Cannot allocate memory" errors during LLVM compilation
 os.environ.setdefault('XLA_PYTHON_CLIENT_PREALLOCATE', 'false')
-os.environ.setdefault('XLA_PYTHON_CLIENT_MEM_FRACTION', '0.5')
-xla_flags = os.environ.get('XLA_FLAGS', '')
-if '--xla_force_host_platform_device_count' not in xla_flags:
-    os.environ['XLA_FLAGS'] = f'{xla_flags} --xla_force_host_platform_device_count=1'.strip()
 
 import re
 import pandas as pd
 import numpy as np
-import pickle 
+import pickle
 import traceback
 
 from typing import Optional, Union, Callable
@@ -262,7 +256,7 @@ def process_multiple_video_single_view(
     # Get all CSV files from the first seed directory
     first_seed_dir = seed_dirs[0]
     base_files = os.listdir(os.path.join(first_seed_dir, inference_dir))
-    view_files = [f for f in base_files if view in f and f.endswith('.csv')] # all csv files with view name 
+    view_files = [f for f in base_files if view in f and f.endswith('.csv')] # all csv files with view name
     # Process each file (representing a different video) separately
     for file_name in view_files:
         # Check if output file already exists
@@ -270,7 +264,7 @@ def process_multiple_video_single_view(
         if os.path.exists(preds_file) and not overwrite:
             print(f"Skipping {file_name} - output file already exists (overwrite=False)")
             continue
-        
+
         print(f"Processing file: {file_name}")
         
         # Collect this file from all seed directories
@@ -390,11 +384,11 @@ def post_process_ensemble_videos(
                     if not result_file.exists():
                         all_outputs_exist = False
                         break
-                
+
                 if all_outputs_exist and not overwrite:
                     print(f"Skipping session {first_view_session} - all output files already exist (overwrite=False)")
                     continue
-                
+
                 # Process multiview case for videos
                 all_pred_files = []
 
@@ -402,8 +396,8 @@ def post_process_ensemble_videos(
                 calibration_file = None
                 if non_linear:
                     calibration_file = _get_eks_calibration_file(
-                        first_view_session, 
-                        cfg_lp.data.data_dir, 
+                        first_view_session,
+                        cfg_lp.data.data_dir,
                         views
                     )
                     if calibration_file:
@@ -423,17 +417,17 @@ def post_process_ensemble_videos(
                 # Not None when there's bbox files in the dataset, i.e. chickadee-crop.
                 all_pred_files_uncropped = prepare_uncropped_csv_files(all_pred_files, lambda p: _get_bbox_path_fn(p, Path(results_dir), Path(cfg_lp.data.data_dir)))
                 print(f"all_pred_files_uncropped is {all_pred_files_uncropped}")
-                
+
                 input_dfs_list, keypoint_names = format_data(
                     input_source=all_pred_files_uncropped or all_pred_files,
                     camera_names=views,
                 )
- 
+
                 # print(f" input dfs list: {input_dfs_list}")
 
                 # Run multiview EKS
                 # n_latent = n_latent if n_latent is not None else 3
-                results_dfs = run_eks_multiview(
+                results_dfs, df_3d = run_eks_multiview(
                     markers_list=input_dfs_list,
                     keypoint_names=keypoint_names,
                     views=views,
@@ -442,6 +436,7 @@ def post_process_ensemble_videos(
                     n_latent=n_latent,
                     pca_object=pca_object,
                     calibration=calibration_file,
+                    verbose=True,
                 )
 
                 # Save results for each view
@@ -463,6 +458,15 @@ def post_process_ensemble_videos(
                         generate_cropped_csv_file(uncropped_result_file, bbox_path, result_file, img_height = 320, img_width = 320, mode="subtract")
 
                     print(f"Saved ensemble {mode} predictions for {view} view to {result_file}")
+
+                # Save 3D DataFrame if available
+                if df_3d is not None:
+                    session_stem = Path(first_view_session).stem
+                    # Strip the first view token from the session name to get a view-agnostic stem
+                    session_stem_3d = session_stem.replace(views[0], "").strip("_")
+                    result_file_3d = Path(output_dir) / f"{session_stem_3d}_3d.csv"
+                    df_3d.to_csv(result_file_3d)
+                    print(f"Saved 3D predictions to {result_file_3d}")
         else:
             # Process each view separately for other modes
             for view in views:
@@ -883,14 +887,14 @@ def run_eks_multiview(
             camgroup = None
 
     # run the ensemble kalman smoother for multiview data
-    camera_dfs, smooth_params_final = ensemble_kalman_smoother_multicam(
+    camera_dfs, smooth_params_final, df_3d = ensemble_kalman_smoother_multicam(
         marker_array = marker_array,
         keypoint_names = keypoint_names,
-        smooth_param = 1000, # 10000, #None,
+        smooth_param = None, # 10000, #None,
         quantile_keep_pca= quantile_keep_pca, 
         camera_names = views,
         # s_frames = [(None,None)], # Keemin wil fix 
-        s_frames = [(0,10)], # used to have 10000 
+        s_frames = [(0,100)], # used to have 10000 
         avg_mode = avg_mode,
         var_mode = var_mode,
         inflate_vars = False,
@@ -909,25 +913,25 @@ def run_eks_multiview(
         if view_idx >= len(camera_dfs) or camera_dfs[view_idx] is None:
             print(f'No results available for view {view}')
             continue
-            
+
         # Extract relevant columns for numpy array
         result_cols = [
-            'x', 'y', 'likelihood', 
+            'x', 'y', 'likelihood',
             'x_ens_median', 'y_ens_median',
-            'x_ens_var', 'y_ens_var', 
+            'x_ens_var', 'y_ens_var',
             'x_posterior_var', 'y_posterior_var'
         ]
-        
+
         df = camera_dfs[view_idx]
         array_data = df.loc[
-            :, 
+            :,
             df.columns.get_level_values(2).isin(result_cols)
         ].to_numpy()
-        
+
         results_arrays[view] = array_data
         results_dfs[view] = df
-        
+
         print(f'Successfully processed view {view}')
-    
-    return results_dfs
+
+    return results_dfs, df_3d
 

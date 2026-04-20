@@ -2,8 +2,8 @@
 # ask Matt about adding the views variable to the config file so we can pick the views that we have and in that way instead of iterating over files we will iterate over views - which will determine things
 
 # dataset_name: chickadee-crop
-dataset_name: fly-anipose
-# dataset_name: cheese-3d
+# dataset_name: fly-anipose
+dataset_name: cheese-3d
 # dataset_name: mirror-mouse-separate
 # dataset_name: ibl-mouse
 # dataset_name: rat7m-crop
@@ -19,7 +19,7 @@ outputs_dir: /teamspace/studios/this_studio/outputs/${dataset_name}
 # outputs_dir: /teamspace/lightning_storage/cheese-3d_results/outputs/${dataset_name}
 
 
-intermediate_results_dir: SVT_vitb_dinov2
+intermediate_results_dir: test_200_MVT_3d_loss_patch_masking
 # initial training of an ensemble of networks
 train_networks:
   # run this section?
@@ -41,15 +41,15 @@ train_networks:
     
   # number of ground truth labels for training
   n_hand_labels: 
-    - 665
+    - 200
   # model type
   model_types:
-    - supervised
+    # - supervised
     # - context
     # - semisupervised
     # - multiview_cnn
     # - multiview_transformer
-    # - mvt_3d_loss
+    - mvt_3d_loss
     # - mvt_unsupervised_losses
     # - mvt_heatmap_3d_loss
     # - mvt_semisupervised
@@ -57,13 +57,14 @@ train_networks:
     # - mvt_context
      
   # run inference on videos in these directories (independent of training videos)
-  inference_dirs: 
-  # []
+  inference_dirs: [] 
+    # - []
+    # - videos
     # - videos_new # OOD videos
     # - videos_new_segmentation # OOD videos
     # - videos_new_add # OOD videos
-    - videos  # InD videos
-    - videos_new # OOD videos
+    # - videos  # InD videos
+    # - videos_new # OOD videos
     # - videos_fix
     # - videos_new_fix # for chickadee
     # - videos-for-each-labeled-frame
@@ -78,7 +79,7 @@ train_networks:
   max_steps: 5000 # need 5000
   unfreezing_step: 400 #400 # started with 260 for supervised - should be 400 for transformer 
   milestone_steps: [2000, 3000, 4000] # in general we have [2000, 3000, 4000]
-  val_check_interval: 10 # was 5 - needed to set to 5 --> for everything I used 10 but need to change ASAP to 10 
+  val_check_interval: 5 # was 5 - needed to set to 5 --> for everything I used 10 but need to change ASAP to 10 
   train_check_interval: 5
 
 # This is if we want to run concat or use post_process.py
@@ -122,7 +123,7 @@ post_processing_labeled_frames:
 
 post_processing_videos:
   eks_multiview:
-    run: True
+    run: False
     overwrite: False
     n_latent: 3 # components for pca object - 6 for chickadee and 3 for fly and mouse 
     non_linear: True  # If True, uses nonlinear EKS with calibration files from data_dir/calibrations/{session}.toml. If False, uses linear EKS.

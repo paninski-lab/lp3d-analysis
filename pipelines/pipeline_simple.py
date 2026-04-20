@@ -5,16 +5,10 @@ import copy
 # Configure JAX memory settings BEFORE any imports to prevent segmentation faults
 # These must be set before JAX is imported anywhere
 os.environ.setdefault('XLA_PYTHON_CLIENT_PREALLOCATE', 'false')
-os.environ.setdefault('XLA_PYTHON_CLIENT_MEM_FRACTION', '0.5')  # Reduced to 30% for more headroom
-xla_flags = os.environ.get('XLA_FLAGS', '')
-if '--xla_force_host_platform_device_count' not in xla_flags:
-    os.environ['XLA_FLAGS'] = f'{xla_flags} --xla_force_host_platform_device_count=1'.strip()
-# Disable JAX's aggressive compilation to prevent LLVM memory errors
-os.environ.setdefault('JAX_PLATFORMS', 'cpu')
+os.environ.setdefault('XLA_PYTHON_CLIENT_MEM_FRACTION', '0.8')
 os.environ.setdefault('XLA_PYTHON_CLIENT_ALLOCATOR', 'default')
-# Disable JIT compilation to prevent LLVM memory allocation errors
-# Set JAX_DISABLE_JIT=true to disable JIT (slower but prevents segfaults)
-os.environ.setdefault('JAX_DISABLE_JIT', 'false')  # Disable JIT by default to prevent memory issues
+# Set JAX_DISABLE_JIT=true to disable JIT (slower but prevents segfaults if needed)
+os.environ.setdefault('JAX_DISABLE_JIT', 'false')
 
 from omegaconf import OmegaConf
 
@@ -23,7 +17,9 @@ from lp3d_analysis.train import train_and_infer
 from lp3d_analysis.utils import extract_ood_frame_predictions, rename_pixel_error_files
 # from lp3d_analysis.post_process import  post_process_ensemble_videos , post_process_ensemble_labels #post_process_ensemble_labels,
 from lp3d_analysis.post_process import post_process_ensemble_labels #post_process_ensemble_labels,
-from lp3d_analysis.post_process_full_videos import  post_process_ensemble_videos, extract_labeled_frame_predictions
+# post_process_full_videos imports JAX/EKS — imported lazily so JAX doesn't
+# initialize and claim GPU memory before Lightning Pose training/inference runs.
+# from lp3d_analysis.post_process_full_videos import post_process_ensemble_videos, extract_labeled_frame_predictions
 # from lp3d_analysis.post_process_concat import  post_process_ensemble_videos, post_process_ensemble_labels_concat
 # from lp3d_analysis.post_process_concat_bbox import  post_process_ensemble_videos, post_process_ensemble_labels_concat
 # from lp3d_analysis.post_process_concat_bbox_short_version_shorter import  post_process_ensemble_videos, post_process_ensemble_labels_concat
@@ -134,7 +130,8 @@ def pipeline(config_file: str, for_seed: int | None = None) -> None:
     for mode, mode_config in cfg_pipe.post_processing_videos.items():
         for model_type in cfg_pipe.train_networks.model_types:
             for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
-                if mode_config.run: # if the mode is mean or median or eks_singleview 
+                if mode_config.run: # if the mode is mean or median or eks_singleview
+                    from lp3d_analysis.post_process_full_videos import post_process_ensemble_videos
                     print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}")
                     # cfg_lp_copy = make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_seed)
                     post_process_ensemble_videos(
@@ -171,6 +168,7 @@ def pipeline(config_file: str, for_seed: int | None = None) -> None:
                         # I want to run only if there are files in the directory and it is not empty
                         print(f"Checking if inference directory {inference_dir} exists and is not empty")
                         if os.path.exists(os.path.join(results_dir, inference_dir)) and os.listdir(os.path.join(results_dir, inference_dir)):
+                            from lp3d_analysis.post_process_full_videos import extract_labeled_frame_predictions
                             extract_labeled_frame_predictions(
                                 cfg_lp=cfg_lp_copy,
                                 results_dir=results_dir,
