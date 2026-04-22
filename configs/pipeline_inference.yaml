@@ -19,7 +19,7 @@ outputs_dir: /teamspace/studios/this_studio/outputs/${dataset_name}
 # outputs_dir: /teamspace/lightning_storage/cheese-3d_results/outputs/${dataset_name}
 
 
-intermediate_results_dir: test_200_MVT_3d_loss_patch_masking
+intermediate_results_dir: test_200_MVT_3d_loss_unsupervised_losses
 # initial training of an ensemble of networks
 train_networks:
   # run this section?
@@ -49,8 +49,8 @@ train_networks:
     # - semisupervised
     # - multiview_cnn
     # - multiview_transformer
-    - mvt_3d_loss
-    # - mvt_unsupervised_losses
+    # - mvt_3d_loss
+    - mvt_unsupervised_losses
     # - mvt_heatmap_3d_loss
     # - mvt_semisupervised
     # - multiview_transformer_mhcrnn
@@ -79,7 +79,7 @@ train_networks:
   max_steps: 5000 # need 5000
   unfreezing_step: 400 #400 # started with 260 for supervised - should be 400 for transformer 
   milestone_steps: [2000, 3000, 4000] # in general we have [2000, 3000, 4000]
-  val_check_interval: 5 # was 5 - needed to set to 5 --> for everything I used 10 but need to change ASAP to 10 
+  val_check_interval: 10 # was 5 - needed to set to 5 --> for everything I used 10 but need to change ASAP to 10 
   train_check_interval: 5
 
 # This is if we want to run concat or use post_process.py

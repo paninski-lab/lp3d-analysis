@@ -175,14 +175,15 @@ training:
   patch_mask:
     init_step: 700
     final_step: 5000
-    init_ratio: 0.0
-    final_ratio: 0.0 # to disable patch masking set to 0.0
+    init_ratio: 0.1
+    final_ratio: 0.5 # to disable patch masking set to 0.0
 
 model:
   # list of unsupervised losses
-  # "pca_singleview" | "pca_multiview" | "temporal" | "unimodal_mse" | "unimodal_kl" | "supervised_pairwise_projections"
+  # "pca_singleview" | "pca_multiview" | "temporal" | "unimodal_mse" | "unimodal_kl" | "supervised_pairwise_projections" | "cycle_reprojection"
   # losses_to_use: ["pca_multiview"]
-  losses_to_use: []
+  # losses_to_use: ["cycle_reprojection"]
+  losses_to_use: ["pca_multiview"]
   # backbone network:
   # resnet18 | resnet34 | resnet50 | resnet101 | resnet152 | resnet50_contrastive
   # resnet50_animalpose_apose | resnet50_animal_ap10k
@@ -219,8 +220,8 @@ dali:
 losses:
   # loss = projection onto the discarded eigenvectors
   pca_multiview:
-    # weight in front of PCA loss
-    log_weight: 5.0 # the weight we want for the pca loss. the smaller it is the higher the weight 
+    # weight in front of PCA loss # should probably be 11 
+    log_weight: 11.0 # the weight we want for the pca loss. the smaller it is the higher the weight 
     # predictions whould lie within the low-d subspace spanned by these components
     components_to_keep: 3
     # absolute error (in pixels) below which pca loss is zeroed out; if not null, this
@@ -253,8 +254,26 @@ losses:
   #   # parameter takes precedence over `empirical_epsilon_percentile`
   #   epsilon: null
 
-  # supervised_reprojection_heatmap_mse:
-  #   log_weight: 2.0
+  supervised_reprojection_heatmap_mse:
+    log_weight: 3.0
+
+  # cycle-reprojection consistency on unlabeled multiview data.
+  # Triangulates predicted 2D keypoints to 3D (pairwise, nanmedian over pairs),
+  # reprojects back to each view, penalizes L2(pred, reprojection).
+  # Path A v1: uses a single session's calibration (set `session` to override;
+  # null/absent picks the first session from camera_params_file).
+  # cycle_reprojection:
+  #   log_weight: 5.0
+  #   # L2 reprojection error (pixels) below which loss is zeroed out
+  #   epsilon: 5.0
+  #   # minimum per-keypoint confidence required to contribute to the loss
+  #   # use 0.0 to disable (heatmap confidences are ~1/heatmap_area early in training)
+  #   prob_threshold: 0.0
+  #   # session key from camera_params_file `file` column; null = first session
+  #   session: null
+  #   # if true, print per-call reprojection-error summary. Init + first-forward
+  #   # diagnostics print regardless of this flag.
+  #   verbose: true
 
 
 eval:
@@ -292,4 +311,5 @@ callbacks:
     init_val: 0.0
     increase_factor: 0.01
     final_val: 1.0
-    freeze_until_epoch: 0
+    # freeze_until_epoch: 0
+    freeze_until_epoch: 60

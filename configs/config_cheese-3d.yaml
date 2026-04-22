@@ -7,7 +7,8 @@ data:
   # camera_params_file: /teamspace/studios/data/cheese-3d/calibrations.csv
   data_dir: /teamspace/studios/this_studio/pseudo_labeled_dataset_cheese-3d_10k_new/cheese-3d
   # video_dir: /teamspace/studios/data/cheese-3d/videos
-  video_dir: /teamspace/studios/data/cheese-3d/ephys/videos
+  # video_dir: /teamspace/studios/data/cheese-3d/ephys/videos
+  video_dir: /teamspace/studios/this_studio/pseudo_labeled_dataset_cheese-3d_10k_new/cheese-3d/videos
   camera_params_file: /teamspace/studios/this_studio/pseudo_labeled_dataset_cheese-3d_10k_new/cheese-3d/calibrations.csv
   csv_file:
     - CollectedData_BC.csv
