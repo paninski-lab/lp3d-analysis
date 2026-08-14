@@ -10,7 +10,7 @@ dataset_name: rat7m-crop
 # dataset_name: human36m-crop
 # dataset_name: two-mouse
 
-lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_${dataset_name}.yaml
+lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_${dataset_name}_rebuttal.yaml
 
 # [needed?] pipeline seed for initial data split
 pipeline_seeds: 0
@@ -30,15 +30,16 @@ train_networks:
   # pose estimation data type
   # data_type: lp
   # ensemble seeds
+  # Single seed for this first rat7m run; add 1, 2, ... back for the full ensemble.
   ensemble_seeds:
     - 0
-    - 1
-    - 2
+    # - 1
+    # - 2
     # - 3
     # - 4
     # - 5
     # - 6
-    
+
   # number of ground truth labels for training
   n_hand_labels: 
     - 200
