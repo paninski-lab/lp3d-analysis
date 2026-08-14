@@ -43,12 +43,22 @@ data:
   # downsample heatmaps - 2 | 3
   downsample_factor: 2
   # total number of keypoints
-  num_keypoints: 15
+  # sizes the model's output head (utils/scripts.py passes this to the model)
+  num_keypoints: 20
   # keypoint names
+  # ORDER MUST MATCH the CSV column order: these labels are applied to the
+  # prediction csvs verbatim (utils/predictions.py PredictionHandler), while the
+  # dataset itself reads names out of the csv. A mismatch silently mislabels
+  # every prediction column.
   keypoint_names:
+    - HeadF
+    - HeadB
+    - HeadL
     - SpineF
     - SpineM
     - SpineL
+    - Offset1
+    - Offset2
     - HipL
     - HipR
     - ElbowL
@@ -68,10 +78,22 @@ data:
   # columns that correspond to keypoints only labeled in a single view are omitted
   # TODO: what if a keypoint is labeled in more than 1 but not all views?
   # this info is only used for the multiview pca loss
-  mirrored_column_matches: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+  mirrored_column_matches: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
   columns_for_singleview_pca: []
 
   skeleton:
+    # head: the three skull markers form a rigid triangle (HeadF-HeadB std is
+    # 3.8px, vs 7.1px for a real limb joint), tied into the spine at SpineF
+    - ['HeadF', 'HeadB']
+    - ['HeadB', 'HeadL']
+    - ['HeadF', 'HeadL']
+    - ['HeadB', 'SpineF']
+    # offset markers: trunk markers lateral to the spine midline, drawn to the
+    # spine marker each one actually sits nearest (Offset1->SpineF 23.7px,
+    # Offset2->SpineL 25.0px). Not anatomical joints; these edges are for
+    # visualisation only (skeleton is unused by lightning_pose itself).
+    - ['Offset1', 'SpineF']
+    - ['Offset2', 'SpineL']
     - ['SpineF', 'SpineM']
     - ['SpineM', 'SpineL']
     - ['SpineF', 'ShoulderL']
@@ -88,6 +110,12 @@ data:
     - ['KneeR', 'ShinR']
   
   skeleton_colors:
+    HeadF-HeadB: magenta
+    HeadB-HeadL: magenta
+    HeadF-HeadL: magenta
+    HeadB-SpineF: orchid
+    Offset1-SpineF: gray
+    Offset2-SpineL: gray
     SpineF-SpineM: darkred
     SpineM-SpineL: darkred
     SpineF-ShoulderL: yellow
@@ -120,9 +148,13 @@ training:
   # batch size of labeled data during test
   test_batch_size: 1
   # fraction of labeled data used for training
-  train_prob: 0.95
+  # NB: `train_frames` below caps the train set regardless, so train_prob only
+  # sets the pool that 200 frames are drawn from. val_prob is what actually
+  # costs time: the val set is val_prob * ALL labeled frames and is never
+  # subsampled, so on the 27,827-frame train split 0.05 -> 1391 val frames.
+  train_prob: 0.98
   # fraction of labeled data used for validation (remaining used for test)
-  val_prob: 0.05
+  val_prob: 0.02  # -> ~557 val frames
   # <=1 - fraction of total train frames (determined by `train_prob`) used for training
   # >1 - number of total train frames used for training
   train_frames: 1
