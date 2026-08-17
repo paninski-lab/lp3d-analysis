@@ -10,10 +10,14 @@ own session directory, with identity stripped from the keypoint names::
     labeled-data/CSDS-Day1-B_1-Defeat_Camera0_white/img00001256.jpg
 
 The crop for an animal in a view comes from that animal's own labelled keypoints
-*in that view*: centre on their mean, size from their extent times
-``--crop-ratio``. Nothing 3D is involved in choosing a box -- no triangulation, no
-calibration, no centroid model. The formula matches
-``lightning_pose.utils.cropzoom._calculate_bbox_size``.
+*in that view*: centred on the midpoint of their extent, sized from that extent
+times ``--crop-ratio``. Nothing 3D is involved in choosing a box -- no
+triangulation, no calibration, no centroid model.
+
+**No labelled keypoint is ever cropped out.** Containment is structural, not a
+matter of picking a generous ratio: see :func:`keypoints_to_bbox`. Generation
+also asserts it per crop, so a regression fails the build rather than quietly
+producing labels that sit outside their own image and cannot be learned.
 
 Because the box is sized from the keypoints it contains, it breathes with posture:
 a stretched animal gets a larger box than a curled one, so apparent scale varies
@@ -125,16 +129,28 @@ def split_animals(df: pd.DataFrame, animals: list[str]) -> tuple[dict[str, np.nd
 def keypoints_to_bbox(
     keypoints: np.ndarray, crop_ratio: float, min_size: int = 32,
 ) -> np.ndarray:
-    """Box around a single animal's keypoints in one view.
+    """Box around a single animal's keypoints in one view, guaranteed to contain them.
 
-    Mirrors ``cropzoom._calculate_bbox_size``: the side is the larger of the x and
-    y extents times ``crop_ratio``, made square and even. Square keeps aspect
-    ratio when the crop is resized to a square model input; even sizes avoid
-    trouble with video encoders downstream.
+    Side length follows ``cropzoom._calculate_bbox_size`` -- the larger of the x and
+    y extents times ``crop_ratio`` -- but the box is centred on the **midpoint** of
+    the keypoint extent rather than their mean. That distinction is what makes
+    containment a guarantee: the side is at least each individual extent, so a box
+    centred on the midpoint always reaches both ends. Centring on the mean does not,
+    because the mean sits wherever the keypoints happen to cluster, and an
+    asymmetric pose then pushes the far keypoint past the edge.
+
+    Integer rounding is handled explicitly rather than assumed away. Flooring the
+    top-left corner can only move the box up and left, which cannot uncover the
+    low end; the side is then grown until it strictly covers the high end, with a
+    pixel to spare, before being made even.
+
+    Square boxes keep aspect ratio when the crop is resized to a square model
+    input; even sides avoid trouble with video encoders downstream.
 
     Args:
         keypoints: (n_keypoints, 2) in original frame pixels; may contain NaN.
-        crop_ratio: how much larger than the animal to crop.
+        crop_ratio: how much larger than the animal to crop. Must be >= 1.0, since
+            below that no box sized from the extent can contain the extent.
         min_size: floor on side length, for frames with one or two labelled points
             where the extent would otherwise collapse to nothing.
 
@@ -143,23 +159,31 @@ def keypoints_to_bbox(
         no labelled keypoint in this view.
 
     """
-    if np.all(np.isnan(keypoints)):
+    if crop_ratio < 1.0:
+        raise ValueError(
+            f"crop_ratio must be >= 1.0 to contain the keypoints, got {crop_ratio}"
+        )
+
+    valid = keypoints[~np.isnan(keypoints).any(axis=1)]
+    if len(valid) == 0:
         return np.full(4, np.nan)
 
-    x, y = keypoints[:, 0], keypoints[:, 1]
-    extent = max(
-        np.nanmax(x) - np.nanmin(x),
-        np.nanmax(y) - np.nanmin(y),
-    )
+    lo, hi = valid.min(axis=0), valid.max(axis=0)
+    side = max(float((hi - lo).max()) * crop_ratio, float(min_size))
 
-    size = int(np.ceil(max(extent * crop_ratio, min_size)))
-    if size % 2:
-        size += 1
+    # Midpoint of the extent, so the box reaches both ends of both axes.
+    center = (lo + hi) / 2.0
+    x0 = float(np.floor(center[0] - side / 2.0))
+    y0 = float(np.floor(center[1] - side / 2.0))
 
-    centroid = np.nanmean(keypoints, axis=0)
-    topleft = np.floor(centroid - size / 2.0)
+    # Grow until the far edge strictly clears the furthest keypoint. Growing only
+    # extends down and right, so the low end stays covered.
+    side = max(side, hi[0] - x0 + 1.0, hi[1] - y0 + 1.0)
+    side = int(np.ceil(side))
+    if side % 2:
+        side += 1
 
-    return np.array([topleft[0], topleft[1], size, size])
+    return np.array([x0, y0, float(side), float(side)])
 
 
 def crop_and_resize(image: np.ndarray, bbox: np.ndarray, size: int) -> np.ndarray:
@@ -297,7 +321,17 @@ def build_split(
 
             kp_crop = keypoints_to_crop_coords(keypoints[animal][i], bbox, size)
             valid = ~np.isnan(kp_crop).any(axis=-1)
-            outside += int(np.sum(np.any((kp_crop < 0) | (kp_crop > size), axis=-1) & valid))
+            out_mask = np.any((kp_crop < 0) | (kp_crop > size - 1), axis=-1) & valid
+            if out_mask.any():
+                # Containment is a guarantee of keypoints_to_bbox, so this can only
+                # fire on a bug there. Cropping a labelled keypoint away silently
+                # would turn it into an unlearnable target, so refuse to write it.
+                bad = [stems[k] for k in np.flatnonzero(out_mask)]
+                raise AssertionError(
+                    f"{bad} fall outside the crop for {instance_path(src_rel, animal)}: "
+                    f"bbox={bbox.tolist()}, crop coords={kp_crop[out_mask].tolist()}"
+                )
+            outside += int(out_mask.sum())
 
             index.append(out_rel)
             values.append(kp_crop.reshape(-1))
@@ -404,7 +438,8 @@ def main() -> None:
         stats = build_split(
             args.source, args.output, suffix, args.animals,
             args.crop_ratio, args.output_size,
-            (args.output / "qc" / split) if args.qc_count else None, args.qc_count,
+            (args.output.parent / f"{args.output.name}_qc" / split) if args.qc_count else None,
+            args.qc_count,
         )
         print(f"  {stats['n_frames']} frames -> {stats['n_rows']} rows per view "
               f"(dropped {stats['n_rows_dropped']})")
