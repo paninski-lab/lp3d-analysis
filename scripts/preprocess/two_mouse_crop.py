@@ -433,7 +433,11 @@ def main() -> None:
         "output_size": args.output_size,
         "animals": list(args.animals),
         "views": VIEWS,
-        "bbox_definition": "max keypoint extent * crop_ratio, square, about the keypoint mean",
+        "bbox_definition": (
+            "square, side = max keypoint extent * crop_ratio, centred on the "
+            "midpoint of the keypoint extent, grown to strictly contain it after "
+            "integer rounding"
+        ),
         "lp3d_analysis_sha": git_sha(),
         "splits": {},
     }
