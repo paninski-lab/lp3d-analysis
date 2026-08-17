@@ -624,7 +624,7 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
 
         'v0_5k_128': '#7f7f7f',   # Middle Gray
         'v1_5k_128': '#d62728',   # Brick Red
-        'v2_5k_128': 'gray',   # Muted Blue
+        'v2_5k_128': 'gray',   
         'v3_5k_128': 'orange',   # Safety Orange
         'v4_5k_128': 'orange' , # strong yellow    
         'v5_5k_128': '#9467bd',   # Muted Purple
@@ -929,9 +929,14 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
             'v0_5k_128_ens_med_anipose.0': 'Ensemble Median Anipose',
             'v0_5k_128_anipose_ens_med_4views': 'Ensemble Median Anipose 4 views',
             'v0_5k_128_eks_multiview_videos_new.0': 'mveks extracted from full videos',
+        
         }
         
-
+    elif dataset_name == 'crim13-cropped':
+        custom_labels = {
+            'v1_5k_128': 'SVT_vitb_dinov2 (cropped)',
+            'v2_5k_128': 'SVT_vitb_dinov2 (original)',
+        }
 
     # Plot each normalized model
     for model in unique_models:

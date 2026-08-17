@@ -1,6 +1,7 @@
 import argparse
 import os
 import copy
+import re
 
 # Configure JAX memory settings BEFORE any imports to prevent segmentation faults
 # These must be set before JAX is imported anywhere
@@ -51,6 +52,332 @@ VALID_MODEL_TYPES = [
     'mvt_transformer_mhcrnn_semisupervised',  # New model type for semi-supervised multiview transformer MHCRNN
 
 ]
+
+
+def convert_original_to_cropped_format(
+    results_dir: str,
+    animal_names: list[str],
+    overwrite: bool = False,
+) -> None:
+    """Convert original-format prediction/pixel-error files to cropped format.
+
+    Original format: 1 row per frame, 14 columns (7 per animal with animal prefix).
+    Cropped format:  2 rows per frame (one per animal), 7 columns (no prefix).
+
+    Operates in-place: reads each CSV, rewrites it in the cropped layout.
+    A backup of the original file is kept with a ``_original_format`` suffix.
+    """
+    import pandas as pd
+
+    files_to_convert = [
+        f for f in os.listdir(results_dir)
+        if f.startswith("predictions") and f.endswith(".csv")
+    ]
+
+    if not files_to_convert:
+        print(f"No prediction files found in {results_dir}")
+        return
+
+    # Determine base keypoint names (strip animal prefix from first animal)
+    # e.g. "black_mouse_nose" -> "nose"
+    prefix = animal_names[0] + "_"
+
+    for fname in files_to_convert:
+        fpath = os.path.join(results_dir, fname)
+        backup_path = os.path.join(results_dir, fname.replace(".csv", "_original_format.csv"))
+
+        if os.path.exists(backup_path) and not overwrite:
+            print(f"Skipping {fname} (already converted, backup exists)")
+            continue
+
+        is_pixel_error = "pixel_error" in fname or "pca_singleview_error" in fname
+
+        if is_pixel_error:
+            _convert_error_file(fpath, backup_path, animal_names)
+        else:
+            _convert_predictions_file(fpath, backup_path, animal_names)
+
+
+def _convert_predictions_file(fpath, backup_path, animal_names):
+    """Convert a predictions.csv (3-row multi-index header with x/y/likelihood)."""
+    import pandas as pd
+    import shutil
+
+    df = pd.read_csv(fpath, header=[0, 1, 2], index_col=0)
+    shutil.copyfile(fpath, backup_path)
+
+    # Get the scorer name from first column
+    scorer = df.columns.get_level_values(0)[0]
+
+    # Extract base keypoint names from the first animal's columns
+    first_animal = animal_names[0]
+    prefix = first_animal + "_"
+    base_kp_names = []
+    seen = set()
+    for bp in df.columns.get_level_values(1):
+        if bp.startswith(prefix):
+            base_name = bp[len(prefix):]
+            if base_name not in seen:
+                base_kp_names.append(base_name)
+                seen.add(base_name)
+
+    coords = ["x", "y", "likelihood"]
+    new_columns = pd.MultiIndex.from_tuples(
+        [(scorer, kp, c) for kp in base_kp_names for c in coords] + [(scorer, "", "set")],
+        names=df.columns.names,
+    )
+
+    # Check if there's a "set" column
+    has_set = any(c == "set" for c in df.columns.get_level_values(2))
+
+    new_rows = []
+    for img_path, row in df.iterrows():
+        parts = img_path.split("/")
+        session_dir = parts[-2] if len(parts) >= 2 else parts[0]
+        img_filename = parts[-1] if len(parts) >= 2 else ""
+
+        # Get the set value if present
+        set_val = ""
+        if has_set:
+            set_cols = [c for c in df.columns if c[2] == "set"]
+            if set_cols:
+                set_val = row[set_cols[0]]
+
+        for animal in animal_names:
+            animal_prefix = animal + "_"
+            # Build new path: session_animal/img
+            new_path = "/".join(parts[:-2] + [f"{session_dir}_{animal}", img_filename]) if len(parts) >= 2 else img_path
+
+            values = []
+            for kp in base_kp_names:
+                orig_kp = animal_prefix + kp
+                for c in coords:
+                    values.append(row[(scorer, orig_kp, c)])
+            values.append(set_val)
+            new_rows.append((new_path, values))
+
+    new_df = pd.DataFrame(
+        [v for _, v in new_rows],
+        index=[p for p, _ in new_rows],
+        columns=new_columns,
+    )
+    new_df.index.name = df.index.name
+    new_df.to_csv(fpath)
+    n_orig = len(df)
+    n_new = len(new_df)
+    print(f"Converted {os.path.basename(fpath)}: {n_orig} rows (14 kp) -> {n_new} rows (7 kp)")
+
+
+def _convert_error_file(fpath, backup_path, animal_names):
+    """Convert a pixel_error.csv (single header row with keypoint columns + set)."""
+    import pandas as pd
+    import shutil
+
+    df = pd.read_csv(fpath, index_col=0)
+    shutil.copyfile(fpath, backup_path)
+
+    first_animal = animal_names[0]
+    prefix = first_animal + "_"
+    base_kp_names = []
+    seen = set()
+    for col in df.columns:
+        if col.startswith(prefix):
+            base_name = col[len(prefix):]
+            if base_name not in seen:
+                base_kp_names.append(base_name)
+                seen.add(base_name)
+
+    has_set = "set" in df.columns
+
+    new_rows = []
+    for img_path, row in df.iterrows():
+        parts = img_path.split("/")
+        session_dir = parts[-2] if len(parts) >= 2 else parts[0]
+        img_filename = parts[-1] if len(parts) >= 2 else ""
+
+        set_val = row["set"] if has_set else None
+
+        for animal in animal_names:
+            animal_prefix = animal + "_"
+            new_path = "/".join(parts[:-2] + [f"{session_dir}_{animal}", img_filename]) if len(parts) >= 2 else img_path
+
+            values = {}
+            for kp in base_kp_names:
+                values[kp] = row.get(animal_prefix + kp, float("nan"))
+            if has_set:
+                values["set"] = set_val
+            new_rows.append((new_path, values))
+
+    new_df = pd.DataFrame(
+        [v for _, v in new_rows],
+        index=[p for p, _ in new_rows],
+    )
+    new_df.index.name = df.index.name
+    new_df.to_csv(fpath)
+    n_orig = len(df)
+    n_new = len(new_df)
+    print(f"Converted {os.path.basename(fpath)}: {n_orig} rows (14 kp) -> {n_new} rows (7 kp)")
+
+
+def create_paired_animal_csv(
+    data_dir: str,
+    csv_file: str,
+    animal_names: list[str],
+    n_hand_labels: int,
+    rng_seed: int,
+    results_dir: str,
+) -> str:
+    """Create a filtered CSV that contains properly paired frames across animals.
+
+    For multi-animal single-view datasets (e.g. crim13 with black_mouse / white_mouse),
+    frames must be selected in matched pairs so that every chosen time-point has an
+    image for every animal.
+
+    ``n_hand_labels`` is the **total** number of rows desired.  The function selects
+    ``n_hand_labels // n_animals`` unique time-points and keeps all animal rows for
+    each, giving exactly ``n_hand_labels`` rows (or the maximum available if the
+    dataset is smaller).
+
+    Returns the absolute path of the newly written CSV.
+    """
+    import pandas as pd
+    import numpy as np
+
+    n_animals = len(animal_names)
+    if n_hand_labels % n_animals != 0:
+        raise ValueError(
+            f"n_hand_labels ({n_hand_labels}) must be divisible by the number of "
+            f"animals ({n_animals}). Choose a multiple of {n_animals}."
+        )
+
+    n_timepoints = n_hand_labels // n_animals
+
+    csv_path = os.path.join(data_dir, csv_file)
+    df = pd.read_csv(csv_path, header=[0, 1, 2], index_col=0)
+
+    # --- group rows by base frame (session without animal + image filename) ---
+    # Image paths look like:
+    #   labeled-data/030609_A25_Block11_BCfe1_t_black_mouse/img00010186.png
+    groups = {}  # base_key -> {animal_name: row_index_in_df}
+    for row_idx, img_path in enumerate(df.index):
+        parts = img_path.split('/')
+        if len(parts) < 2:
+            continue
+        session_dir = parts[-2]
+        img_filename = parts[-1]
+
+        # Identify which animal this row belongs to
+        matched_animal = None
+        base_session = session_dir
+        for animal in animal_names:
+            if animal in session_dir:
+                matched_animal = animal
+                # Strip the animal name to get the base session
+                base_session = session_dir.replace(f'_{animal}', '').replace(f'{animal}_', '').replace(animal, '')
+                # Clean up leftover separators
+                base_session = re.sub(r'_+', '_', base_session).strip('_')
+                break
+
+        if matched_animal is None:
+            print(f"Warning: could not match any animal in path '{img_path}', skipping.")
+            continue
+
+        base_key = f"{base_session}/{img_filename}"
+        groups.setdefault(base_key, {})[matched_animal] = row_idx
+
+    # Keep only fully paired groups (all animals present)
+    paired_keys = [
+        k for k, v in groups.items() if len(v) == n_animals
+    ]
+    print(
+        f"Paired frame selection: {len(paired_keys)} fully paired time-points "
+        f"found out of {len(groups)} total groups "
+        f"({n_animals} animals: {animal_names})"
+    )
+
+    if len(paired_keys) == 0:
+        raise RuntimeError(
+            "No fully paired frames found. Check that animal_names in your config "
+            "match the directory names in CollectedData.csv."
+        )
+
+    if n_timepoints > len(paired_keys):
+        print(
+            f"Warning: requested {n_timepoints} time-points but only "
+            f"{len(paired_keys)} paired frames available. Using all."
+        )
+        n_timepoints = len(paired_keys)
+
+    # Deterministic random selection
+    rng = np.random.RandomState(rng_seed)
+    selected_keys = sorted(rng.choice(paired_keys, size=n_timepoints, replace=False))
+
+    # Collect all row indices for selected paired frames
+    selected_indices = []
+    for key in selected_keys:
+        for animal in animal_names:
+            selected_indices.append(groups[key][animal])
+    selected_indices.sort()
+
+    # Write filtered CSV
+    filtered_df = df.iloc[selected_indices]
+    os.makedirs(results_dir, exist_ok=True)
+    out_filename = f"CollectedData_paired_{n_hand_labels}_seed{rng_seed}.csv"
+    out_path = os.path.join(results_dir, out_filename)
+    filtered_df.to_csv(out_path)
+
+    print(
+        f"Created paired CSV: {out_path} "
+        f"({n_timepoints} time-points × {n_animals} animals = {len(selected_indices)} rows)"
+    )
+
+    # Also create the _new (OOD) paired CSV if the source _new file exists.
+    # Lightning Pose looks for <stem>_new.csv for OOD evaluation; without this
+    # it silently skips OOD predictions.
+    csv_stem = os.path.splitext(csv_file)[0]
+    csv_new_path = os.path.join(data_dir, f"{csv_stem}_new.csv")
+    if os.path.isfile(csv_new_path):
+        df_new = pd.read_csv(csv_new_path, header=[0, 1, 2], index_col=0)
+        groups_new = {}
+        for row_idx, img_path in enumerate(df_new.index):
+            parts = img_path.split('/')
+            if len(parts) < 2:
+                continue
+            session_dir = parts[-2]
+            img_filename = parts[-1]
+            matched_animal = None
+            base_session = session_dir
+            for animal in animal_names:
+                if animal in session_dir:
+                    matched_animal = animal
+                    base_session = session_dir.replace(f'_{animal}', '').replace(f'{animal}_', '').replace(animal, '')
+                    base_session = re.sub(r'_+', '_', base_session).strip('_')
+                    break
+            if matched_animal is None:
+                continue
+            base_key = f"{base_session}/{img_filename}"
+            groups_new.setdefault(base_key, {})[matched_animal] = row_idx
+
+        # Keep all fully paired OOD frames (no subsampling — we want full OOD eval)
+        paired_new_indices = []
+        for key, animals_dict in groups_new.items():
+            if len(animals_dict) == n_animals:
+                for animal in animal_names:
+                    paired_new_indices.append(animals_dict[animal])
+        paired_new_indices.sort()
+
+        if paired_new_indices:
+            filtered_new_df = df_new.iloc[paired_new_indices]
+            out_stem = os.path.splitext(out_filename)[0]
+            out_new_path = os.path.join(results_dir, f"{out_stem}_new.csv")
+            filtered_new_df.to_csv(out_new_path)
+            n_new_timepoints = len(paired_new_indices) // n_animals
+            print(
+                f"Created paired OOD CSV: {out_new_path} "
+                f"({n_new_timepoints} time-points × {n_animals} animals = {len(paired_new_indices)} rows)"
+            )
+
+    return out_path
 
 
 def _model_losses_to_use_from_cfg(cfg_lp, default_if_empty: list | None = None) -> list:
@@ -105,6 +432,29 @@ def pipeline(config_file: str, for_seed: int | None = None) -> None:
                         f'{model_type}_{n_hand_labels}_{rng_seed}',
                     )
                     cfg_lp_copy = make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_seed)
+
+                    # For multi-animal datasets, create a paired-frame CSV so that
+                    # every selected time-point includes all animals.
+                    animal_names = cfg_lp.data.get("animal_names", None)
+                    if animal_names is not None and len(animal_names) > 1:
+                        paired_csv_dir = os.path.join(outputs_dir, 'paired_csvs')
+                        paired_csv_path = create_paired_animal_csv(
+                            data_dir=data_dir,
+                            csv_file=cfg_lp.data.csv_file,
+                            animal_names=list(animal_names),
+                            n_hand_labels=n_hand_labels,
+                            rng_seed=rng_seed,
+                            results_dir=paired_csv_dir,
+                        )
+                        # Point to paired CSV. The CSV already contains exactly the
+                        # right paired rows, so set train_frames=1 (meaning "use all
+                        # available training frames") and let train_prob/val_prob
+                        # handle the train-vs-validation split within those rows.
+                        cfg_lp_copy = OmegaConf.merge(cfg_lp_copy, {
+                            "data": {"csv_file": paired_csv_path},
+                            "training": {"train_frames": 1},
+                        })
+
                     # Main function call
                     train_and_infer(
                         cfg_lp=cfg_lp_copy,

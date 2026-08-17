@@ -1,0 +1,221 @@
+data:
+  image_orig_dims:
+    height: 480
+    width: 640
+  image_resize_dims:
+    height: 256
+    width: 256
+  data_dir: /teamspace/studios/data-multi-animal/crim13
+  video_dir: /teamspace/studios/data-multi-animal/crim13/videos
+  csv_file: CollectedData.csv
+  downsample_factor: 2
+  num_keypoints: 14
+  keypoint_names:
+  - black_mouse_nose
+  - black_mouse_right_ear
+  - black_mouse_left_ear
+  - black_mouse_top_of_neck
+  - black_mouse_right_rear_knee
+  - black_mouse_left_rear_knee
+  - black_mouse_base_of_tail
+  - white_mouse_nose
+  - white_mouse_right_ear
+  - white_mouse_left_ear
+  - white_mouse_top_of_neck
+  - white_mouse_right_rear_knee
+  - white_mouse_left_rear_knee
+  - white_mouse_base_of_tail
+  mirrored_column_matches: null
+  columns_for_singleview_pca: [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13]
+
+training:
+  imgaug: dlc
+  train_batch_size: 16
+  val_batch_size: 48
+  test_batch_size: 48
+  train_prob: 0.95
+  val_prob: 0.05
+  train_frames: 1
+  num_gpus: 1
+  num_workers: 4
+  early_stop_patience: 3
+  unfreezing_epoch: 20
+  min_epochs: 300
+  max_epochs: 300
+  log_every_n_steps: 10
+  check_val_every_n_epoch: 5
+  rng_seed_data_pt: 0
+  rng_seed_model_pt: 0
+  optimizer: Adam
+  optimizer_params:
+    learning_rate: 0.00005
+  lr_scheduler: multisteplr
+  lr_scheduler_params:
+    multisteplr:
+      # milestones: [150, 200, 250]
+      milestones: [2000, 3000, 4000]
+      gamma: 0.5
+  uniform_heatmaps_for_nan_keypoints: true
+
+model:
+  losses_to_use: []
+  backbone: vitb_dinov2 #resnet50_animal_ap10k
+  model_type: heatmap
+  heatmap_loss_type: mse
+  model_name: test
+
+dali:
+  general:
+    seed: 123456
+  base:
+    train:
+      sequence_length: 64
+    predict:
+      sequence_length: 192
+  context:
+    train:
+      batch_size: 32
+    predict:
+      sequence_length: 192
+
+losses:
+  pca_singleview:
+    log_weight: 5.0
+    components_to_keep: 0.99
+    epsilon: null
+  pca_singleview:
+    # weight in front of PCA loss
+    log_weight: 5.0
+    # predictions whould lie within the low-d subspace spanned by components that describe this fraction of variance
+    components_to_keep: 0.99
+    # absolute error (in pixels) below which pca loss is zeroed out; if not null, this
+    # parameter takes precedence over `empirical_epsilon_percentile`
+    epsilon: null
+  temporal:
+    log_weight: 5.0
+    epsilon: 10.0
+    prob_threshold: 0.05
+
+eval:
+  # paths to the hydra config files in the output folder, OR absolute paths to such folders.
+  hydra_paths: [" "]
+  # predict?
+  predict_vids_after_training: false
+  # save .mp4?
+  save_vids_after_training: false
+  # str with an absolute path to a directory containing videos for prediction.
+  # (it's not absolute just for the toy example)
+  # test_videos_directory: "/media/mattw/behavior/pose-estimation-data-final/cheese-2d/videos_test"
+  # str with an absolute path to directory in which you want to save .csv with predictions
+  saved_vid_preds_dir: null
+  # create labeled video from each video in test_videos_directory
+  create_labeled_video: true
+  # confidence threshold for plotting a vid
+  confidence_thresh_for_vid: 0.05
+  # str with absolute path to the video file you want plotted with keypoints
+  video_file_to_plot: ""
+  # a list of strings, each points to a .csv file with predictions of a given model to the same video. will be combined with video_file_to_plot to make a visualization
+  pred_csv_files_to_plot: [" "]
+
+callbacks:
+  anneal_weight:
+    attr_name: "total_unsupervised_importance"
+    init_val: 0.0
+    increase_factor: 0.01
+    final_val: 1.0
+    freeze_until_epoch: 0
+
+# hydra:
+#     run:
+#       dir: /media/mattw/behavior/results/pose-estimation/cheese-2d/${now:%Y-%m-%d}/${now:%H-%M-%S}
+#     sweep:
+#       dir: /media/mattw/behavior/results/pose-estimation/cheese-2d/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+#       subdir: ${hydra.job.num}
+
+# training:
+#   imgaug: dlc
+#   train_batch_size: 32
+#   val_batch_size: 48
+#   test_batch_size: 48
+#   train_prob: 0.8
+#   val_prob: 0.1
+#   train_frames: 1
+#   num_gpus: 1
+#   num_workers: 4
+#   early_stop_patience: 3
+#   unfreezing_epoch: 20
+#   dropout_rate: 0.1
+#   min_epochs: 300
+#   max_epochs: 750
+#   log_every_n_steps: 10
+#   check_val_every_n_epoch: 5
+#   gpu_id: 0
+#   rng_seed_data_pt: 0
+#   rng_seed_model_pt: 0
+#   lr_scheduler: multisteplr
+#   lr_scheduler_params:
+#     multisteplr:
+#       milestones:
+#       - 150
+#       - 200
+#       - 250
+#       gamma: 0.5
+# model:
+#   losses_to_use: []
+#   backbone: vits_dino #resnet50_animal_ap10k
+#   model_type: heatmap
+#   heatmap_loss_type: mse
+#   model_name: crim13-cropped
+# dali:
+#   general:
+#     seed: 123456
+#   base:
+#     train:
+#       sequence_length: 32
+#     predict:
+#       sequence_length: 128
+#   context:
+#     train:
+#       batch_size: 16
+#     predict:
+#       sequence_length: 96
+# losses:
+#   pca_singleview:
+#     log_weight: 5.0
+#     components_to_keep: 0.99
+#     empirical_epsilon_percentile: 1.0
+#     empirical_epsilon_multiplier: 1.0
+#     epsilon: null
+#   temporal:
+#     log_weight: 5.0
+#     epsilon: 20.0
+#     prob_threshold: 0.05
+# eval:
+#   hydra_paths:
+#   - ' '
+#   predict_vids_after_training: true
+#   save_vids_after_training: false
+#   fiftyone:
+#     dataset_name: crim13-cropped
+#     build_speed: slow
+#     model_display_names:
+#     - test_model
+#     launch_app_from_script: false
+#     remote: true
+#     address: 127.0.0.1
+#     port: 5151
+#     dataset_to_create: images
+#   test_videos_directory: /teamspace/studios/this_studio/crim13-cropped/videos_black_mouse
+#   saved_vid_preds_dir: null
+#   create_labeled_video: true
+#   confidence_thresh_for_vid: 0.9
+#   video_file_to_plot: null
+#   pred_csv_files_to_plot:
+#   - ' '
+# callbacks:
+#   anneal_weight:
+#     attr_name: total_unsupervised_importance
+#     init_val: 0.0
+#     increase_factor: 0.01
+#     final_val: 1.0
+#     freeze_until_epoch: 0
