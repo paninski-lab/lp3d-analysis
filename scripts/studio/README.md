@@ -15,6 +15,7 @@ Deployed copies live outside the repo, and the studio reads them from there:
 | `launch_queue.sh` | `~/scripts/launch_queue.sh` |
 | `on_start.sh` | `~/.lightning_studio/on_start.sh` |
 | `on_stop.sh` | `~/.lightning_studio/on_stop.sh` |
+| `tensorboard.sh` | run in place |
 
 Paths inside these scripts are absolute and studio-specific (`/teamspace/...`),
 same as `scripts/preprocess/chickadee.py`. Read `STUDIO_SETUP.md` first.
@@ -36,3 +37,6 @@ same as `scripts/preprocess/chickadee.py`. Read `STUDIO_SETUP.md` first.
   `cfg.data.camera_params_file` points at. rat7m-full-crop ships the per-session
   `.toml` files but not the index, so this runs as a post-stage step.
 - `launch_queue.sh` — serializes training runs on the studio's GPU.
+- `tensorboard.sh` — TensorBoard over a results root, so every experiment and seed
+  is a separate comparable curve and later runs appear without a restart. Defaults
+  to `outputs/two-mouse_s` on port 6006.
