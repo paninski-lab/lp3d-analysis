@@ -60,7 +60,12 @@ VIEWS = ["Camera0", "Camera1", "Camera2", "Camera3", "Camera4"]
 ANIMALS = ["black", "white"]
 
 DEFAULT_CROP_RATIO = 1.3
-DEFAULT_OUTPUT_SIZE = 256
+# Stored crop resolution, which is deliberately larger than the model input
+# (cfg.data.image_resize_dims, 256). chickadee-crop does the same: storing above
+# the model input leaves augmentation more pixels to work with and lets the input
+# size be raised later without regenerating. It also matches the 320 that
+# lp3d_analysis/train.py assumes when remapping video predictions out of crops.
+DEFAULT_OUTPUT_SIZE = 320
 HEADER_ROWS = [0, 1, 2]
 
 # In-distribution is the unsuffixed set, out-of-distribution the "_new" set,

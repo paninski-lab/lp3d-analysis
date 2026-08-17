@@ -34,12 +34,11 @@ train_networks:
 
   # NOTE: this becomes training.train_frames, which counts ROWS, not frames. Each
   # frame contributes one row per animal, so for this 2-animal dataset
-  # n_hand_labels = 2 x (number of frames). 414 is every in-distribution row
-  # (207 frames); anything at or above the train split size uses all of it.
+  # n_hand_labels = 2 x (number of frames). 400 = 200 frames.
   # Subsampling drops back to a whole number of frames, so an animal is never
   # separated from its partner.
   n_hand_labels:
-    - 414
+    - 400
 
   # model type
   model_types:
@@ -56,7 +55,7 @@ train_networks:
   max_steps: 5000
   unfreezing_step: 400
   milestone_steps: [2000, 3000, 4000]
-  val_check_interval: 5
+  val_check_interval: 10
   train_check_interval: 5
 
 # Everything below is off: ensembling and EKS need several trained seeds and, for
