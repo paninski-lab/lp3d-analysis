@@ -1,0 +1,112 @@
+# Pipeline config for the per-animal cropped two-mouse dataset.
+#
+# Resolves to configs/config_two-mouse_s.yaml, built by
+# scripts/preprocess/two_mouse_crop.py.
+#
+# Prefer this over `litpose train` for real runs: make_model_cfg() replaces the
+# epoch-based schedule with the step-based one below (min_steps/max_steps/
+# milestone_steps/unfreezing_step) and forces predict_vids_after_training off,
+# which is what the rest of the project's results were produced with.
+
+dataset_name: two-mouse_s
+
+lightning_pose_config: /teamspace/studios/this_studio/lp3d-analysis/configs/config_${dataset_name}.yaml
+
+# [needed?] pipeline seed for initial data split
+pipeline_seeds: 0
+
+outputs_dir: /teamspace/studios/this_studio/outputs/${dataset_name}
+
+intermediate_results_dir: crop_1.3
+
+# initial training of an ensemble of networks
+train_networks:
+  # run this section?
+  run: True
+  # overwrite previous results?
+  overwrite: False
+
+  # ensemble seeds
+  ensemble_seeds:
+    - 0
+    - 1
+    - 2
+
+  # NOTE: this becomes training.train_frames, which counts ROWS, not frames. Each
+  # frame contributes one row per animal, so for this 2-animal dataset
+  # n_hand_labels = 2 x (number of frames). 414 is every in-distribution row
+  # (207 frames); anything at or above the train split size uses all of it.
+  # Subsampling drops back to a whole number of frames, so an animal is never
+  # separated from its partner.
+  n_hand_labels:
+    - 414
+
+  # model type
+  model_types:
+    # heatmap_multiview_transformer + heatmap_cnn head, supervised, with the 3D
+    # reprojection loss from cfg_lp.losses.
+    - mvt_3d_loss
+
+  # run inference on videos in these directories (independent of training videos)
+  # Empty: no cropped videos exist for this dataset yet.
+  inference_dirs: []
+
+  # training parameters
+  min_steps: 5000
+  max_steps: 5000
+  unfreezing_step: 400
+  milestone_steps: [2000, 3000, 4000]
+  val_check_interval: 5
+  train_check_interval: 5
+
+# Everything below is off: ensembling and EKS need several trained seeds and, for
+# the video modes, videos. Turn on once there are runs to post-process.
+post_processing_labels:
+  eks_singleview:
+    run: False
+    overwrite: False
+  eks_multiview:
+    run: False
+    overwrite: False
+    n_latent: 3
+    non_linear: True
+    output_folder_name: non_linear_eks_varinf
+  ensemble_mean:
+    run: False
+    overwrite: False
+  ensemble_median:
+    run: False
+    overwrite: False
+
+post_processing_labeled_frames:
+  run: False
+  overwrite: False
+  modes: null
+
+post_processing_videos:
+  eks_multiview:
+    run: False
+    overwrite: False
+    n_latent: 3
+    non_linear: True
+    output_folder_name: non_linear_eks
+  eks_singleview:
+    run: False
+    overwrite: False
+  ensemble_median:
+    run: False
+    overwrite: False
+  ensemble_mean:
+    run: False
+    overwrite: False
+
+visualization:
+  run: False
+  overwrite: False
+  ens_var_plots: False
+  pixel_error_ens_std_plots:
+    run: False
+    overwrite: False
+  eks_singleview_plots:
+    run: False
+    overwrite: False
