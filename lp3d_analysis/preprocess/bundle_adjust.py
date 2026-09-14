@@ -324,11 +324,11 @@ def find_consistent_3d_points(points2D, cameraArray):
 
 def project_3D_to_2D(points_3d, camParams):
     """points_3d of shape (n_frames, n_keypoints, 3)"""
-    sba = PySBA(camParams, np.NaN, np.NaN, np.NaN, np.NaN)
+    sba = PySBA(camParams, np.nan, np.nan, np.nan, np.nan)
     nFrames, nParts, _ = points_3d.shape
     nCams = camParams.shape[0]
-    allLabels = np.full((nFrames, nCams, nParts, 2), np.NaN)
-    allCamScales = np.full((nFrames, nCams), np.NaN)
+    allLabels = np.full((nFrames, nCams, nParts, 2), np.nan)
+    allCamScales = np.full((nFrames, nCams), np.nan)
     for nCam in range(nCams):
         rVec = camParams[nCam][:3].reshape((1, 3))
         tVec = camParams[nCam][3:6]
@@ -346,7 +346,7 @@ def project_3D_to_2D(points_3d, camParams):
 
 
 def convertParams(camParams):
-    allParams = np.full((len(camParams), 11), np.NaN)
+    allParams = np.full((len(camParams), 11), np.nan)
     for nCam in range(len(camParams)):
         p = camParams[nCam][0]
         f = p['K'][0,0]/2 + p['K'][1,1]/2
@@ -381,7 +381,7 @@ def getCameraArray(allCameras = ['lBack', 'lFront', 'lTop', 'rBack', 'rFront', '
         'rFront': np.array([1.91, .75, -.69, 0.038, 0.11, 1.38, 1780, -0.020, -0.028, 1398, 686]),
         'rTop': np.array([1.95, 1.90, -0.82, 0.04, 0.02, 1.73, 1780, -0.020, -0.028, 1403, 828]),
     }
-    cameraArray = np.full((len(allCameras), 11), np.NaN)
+    cameraArray = np.full((len(allCameras), 11), np.nan)
     for i, e in enumerate(allCameras):
         cameraArray[i,:] = camMatDict[e]
 

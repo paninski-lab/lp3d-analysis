@@ -152,41 +152,52 @@ dataset_info = {
         'crop_size': None,
     },
     'rat7m': {
+        # 'InD_animals': [
+        #     's1-d1',
+        #     's2-d1',
+        #     's2-d2',
+        #     's5-d1',
+        #     's5-d2',
+        # ],
+        # 'OOD_animals': [
+        #     's3-d1',
+        #     's4-d1',
+        # ],
         'InD_animals': [
             's1-d1',
             's2-d1',
             's2-d2',
+            's3-d1',
+        ],
+        'OOD_animals': [
+            's4-d1',
             's5-d1',
             's5-d2',
         ],
-        'OOD_animals': [
-            's3-d1',
-            's4-d1',
-        ],
         'cam_names': ['camera1', 'camera2', 'camera3', 'camera4', 'camera5', 'camera6'],
-        'keypoints': [
+        'keypoints_raw': [
             'HeadF', 'HeadB', 'HeadL',
             'SpineF', 'SpineM', 'SpineL',
             'Offset1', 'Offset2',
             'HipL', 'HipR',
             'ElbowL', 'ArmL', 'ShoulderL', 'ShoulderR', 'ElbowR', 'ArmR', 'KneeR', 'KneeL', 'ShinL', 'ShinR',
         ],
-        'skeleton': np.array([
+        'skeleton_raw': np.array([
             # head
             [ 0,  1],
             [ 1,  2],
-            [ 1,  0],
+            [ 2,  0],
             [ 0,  3],
             [ 1,  3],
             [ 2,  3],
             # torso
             [ 3,  4],
             [ 4,  5],
-            [ 3,  6],
-            [ 4,  6],
-            [ 4,  7],
-            [ 5,  7],
-            [ 6,  7],
+            # [ 3,  6],
+            # [ 4,  6],
+            # [ 4,  7],
+            # [ 5,  7],
+            # [ 6,  7],
             # l arm
             [ 3, 12],
             [12, 10],
@@ -204,7 +215,7 @@ dataset_info = {
             [ 9, 16],
             [16, 19],
         ]),
-        'skeleton_colors': [
+        'skeleton_colors_raw': [
             # head
             'blue',
             'blue',
@@ -215,11 +226,60 @@ dataset_info = {
             # torso
             'darkred',
             'darkred',
+            # 'darkred',
+            # 'darkred',
+            # 'darkred',
+            # 'darkred',
+            # 'pink',
+            # l arm
+            'yellow',
+            'yellow',
+            'yellow',
+            # r arm
+            'limegreen',
+            'limegreen',
+            'limegreen',
+            # l leg
+            'dodgerblue',
+            'dodgerblue',
+            'dodgerblue',
+            # r leg
+            'darkblue',
+            'darkblue',
+            'darkblue',
+        ],
+        'keypoints': [
+            # 'HeadF', 'HeadB', 'HeadL',
+            'SpineF', 'SpineM', 'SpineL',
+            # 'Offset1', 'Offset2',
+            'HipL', 'HipR',
+            'ElbowL', 'ArmL', 'ShoulderL', 'ShoulderR', 'ElbowR', 'ArmR', 'KneeR', 'KneeL', 'ShinL', 'ShinR',
+        ],
+        'skeleton': np.array([
+            # torso
+            [ 0,  1],
+            [ 1,  2],
+            # l arm
+            [ 0,  7],
+            [ 7,  5],
+            [ 5,  6],
+            # r arm
+            [ 0,  8],
+            [ 8,  9],
+            [ 9, 10],
+            # l leg
+            [ 2,  3],
+            [ 3, 12],
+            [12, 13],
+            # r leg
+            [ 2,  4],
+            [ 4, 11],
+            [11, 14],
+        ]),
+        'skeleton_colors': [
+            # torso
             'darkred',
             'darkred',
-            'darkred',
-            'darkred',
-            'pink',
             # l arm
             'yellow',
             'yellow',
@@ -239,5 +299,232 @@ dataset_info = {
         ],
         'w3d': 150,  # scaling factor for crops
         'crop_size': (320, 320),  # (width, height)
+    },
+    'rat-pup': {
+        # single spliced session; no per-animal InD/OOD split available
+        'InD_animals': [],
+        'OOD_animals': [],
+        'cam_names': ['Camera1', 'Camera2', 'Camera3', 'Camera4', 'Camera5', 'Camera6'],
+        'keypoints': [
+            'Snout',                              # 0
+            'EarL', 'EarR',                        # 1, 2
+            'SpineF', 'SpineM', 'SpineL',          # 3, 4, 5
+            'TailBase',                            # 6
+            'ShoulderL', 'ElbowL', 'WristL', 'HandL',  # 7, 8, 9, 10
+            'ShoulderR', 'ElbowR', 'WristR', 'HandR',  # 11, 12, 13, 14
+            'HipL', 'KneeL', 'AnkleL', 'FootL',    # 15, 16, 17, 18
+            'HipR', 'KneeR', 'AnkleR', 'FootR',    # 19, 20, 21, 22
+            'TailMid', 'TailTip',                  # 23, 24
+        ],
+        'skeleton': np.array([
+            # head
+            [ 0,  1],
+            [ 0,  2],
+            [ 1,  3],
+            [ 2,  3],
+            # torso
+            [ 3,  4],
+            [ 4,  5],
+            [ 5,  6],
+            # tail
+            [ 6, 23],
+            [23, 24],
+            # l arm
+            [ 3,  7],
+            [ 7,  8],
+            [ 8,  9],
+            [ 9, 10],
+            # r arm
+            [ 3, 11],
+            [11, 12],
+            [12, 13],
+            [13, 14],
+            # l leg
+            [ 5, 15],
+            [15, 16],
+            [16, 17],
+            [17, 18],
+            # r leg
+            [ 5, 19],
+            [19, 20],
+            [20, 21],
+            [21, 22],
+        ]),
+        'skeleton_colors': [
+            # head
+            'blue',
+            'blue',
+            'blue',
+            'blue',
+            # torso
+            'darkred',
+            'darkred',
+            'darkred',
+            # tail
+            'darkgreen',
+            'darkgreen',
+            # l arm
+            'yellow',
+            'yellow',
+            'yellow',
+            'yellow',
+            # r arm
+            'limegreen',
+            'limegreen',
+            'limegreen',
+            'limegreen',
+            # l leg
+            'dodgerblue',
+            'dodgerblue',
+            'dodgerblue',
+            'dodgerblue',
+            # r leg
+            'darkblue',
+            'darkblue',
+            'darkblue',
+            'darkblue',
+        ],
+        'w3d': None,  # scaling factor for crops; unused by rat-pup.py's ground-truth-driven cropping
+        'crop_size': (320, 320),  # (width, height)
+    },
+    'human36m': {
+        'InD_animals': [
+            's_01',
+            's_05',
+            's_06',
+            's_07',
+            's_08',
+        ],
+        'OOD_animals': [
+            's_09',
+            's_11',
+        ],
+        'cam_names': ['ca_01', 'ca_02', 'ca_03', 'ca_04'],
+        'keypoints': [
+            'bottom_torso',
+            'l_hip', 'l_knee', 'l_foot',
+            'r_hip', 'r_knee', 'r_foot',
+            'center_torso', 'upper_torso', 'neck_base', 'center_head',
+            'r_shoulder', 'r_elbow', 'r_hand',
+            'l_shoulder', 'l_elbow', 'l_hand',
+        ],
+        'skeleton': np.array([
+            # pelvis
+            [ 0,  1],
+            [ 0,  4],
+            # l leg
+            [ 1,  2],
+            [ 2,  3],
+            # r leg
+            [ 4,  5],
+            [ 5,  6],
+            # torso-head
+            [ 0,  7],
+            [ 7,  8],
+            [ 8,  9],
+            [ 9, 10],
+            # r arm
+            [ 8, 11],
+            [11, 12],
+            [12, 13],
+            # l arm
+            [ 8, 14],
+            [14, 15],
+            [15, 16],
+        ]),
+        'skeleton_colors': [
+            # pelvis
+            'pink',
+            'pink',
+            # l leg
+            'dodgerblue',
+            'dodgerblue',
+            # r leg
+            'darkblue',
+            'darkblue',
+            # torso-head
+            'red',
+            'red',
+            'red',
+            'red',
+            # r arm
+            'limegreen',
+            'limegreen',
+            'limegreen',
+            # l arm
+            'yellow',
+            'yellow',
+            'yellow',
+        ],
+        'w3d': 150,  # scaling factor for crops
+        'crop_size': (240, 320),  # (width, height)
+    },
+    'one-mouse-princeton': {
+        'InD_animals': [
+            'CSDS-Day1-A_1-Defeat',
+            'CSDS-Day1-A_3-Defeat',
+            'CSDS-Day3-A_5-Defeat',
+            'CSDS-Day3-A_7-Defeat',
+            'CSDS-Day5-A_12-Defeat',
+            'CSDS-Day7-A_1-Defeat',
+            'CSDS-Day1-A_3-Defeat',
+            'CSDS-Day9-A_5-Defeat',
+            'CSDS-Day9-A_7-Defeat',
+        ],
+        'OOD_animals': [
+            'CSDS-Day5-A_11-Defeat',
+        ],
+        'cam_names': ['Camera0', 'Camera1', 'Camera2', 'Camera3', 'Camera4'],
+        'keypoints': [
+            'Nose',             # 0
+            'Ear_R',            # 1
+            'Ear_L',            # 2
+            'TTI',              # 3
+            'TailTip',          # 4
+            'Head',             # 5
+            'Trunk',            # 6
+            'Tail_0',           # 7
+            'Tail_1',           # 8
+            'Tail_2',           # 9
+            'Shoulder_left',    # 10
+            'Shoulder_right',   # 11
+            'Haunch_left',      # 12
+            'Haunch_right',     # 13
+            'Neck',             # 14
+        ],
+        'skeleton': np.array([
+            [ 3,  5],
+            [ 3,  7],
+            [ 3,  8],
+            [ 3,  9],
+            [ 3, 12],
+            [ 3, 13],
+            [ 3,  6],
+            [ 3,  4],
+            [ 5,  0],
+            [ 5, 14],
+            [ 5, 10],
+            [ 5, 11],
+            [ 5,  1],
+            [ 5,  2],
+        ]),
+        'skeleton_colors': [
+            'pink',
+            'yellow',
+            'yellow',
+            'yellow',
+            'dodgerblue',
+            'dodgerblue',
+            'dodgerblue',
+            'yellow',
+            'red',
+            'red',
+            'red',
+            'red',
+            'red',
+            'red',
+        ],
+        'w3d': None,  # scaling factor for crops
+        'crop_size': None,  # (width, height)
     },
 }

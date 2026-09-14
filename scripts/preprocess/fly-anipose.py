@@ -158,7 +158,9 @@ for animal in (InD_animals + OOD_animals):
             errors_dict[camera] = df_error
 
             # load filtered predictions
-            df_2d_filt = pd.read_hdf(pose_2d_filtered_dir / f'{video_name_w_cam}.h5')
+            # df_2d_filt = pd.read_hdf(pose_2d_filtered_dir / f'{video_name_w_cam}.h5')
+            ## UPDATE - load reprojections instead
+            df_2d_filt = pd.read_hdf(pose_2d_proj_dir / f'{video_name_w_cam}.h5')
             # only keep the "good" indices
             df_2d_filt = df_2d_filt.loc[idxs_prototypes]
 

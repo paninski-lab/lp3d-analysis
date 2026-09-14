@@ -43,7 +43,7 @@ import pandas as pd
 #     # delete tmp directory
 #     shutil.rmtree(tmp_dir)
 
-def save_video(save_file, tmp_dir, framerate=20, frame_pattern='frame_%06d.jpeg', crf=23):
+def save_video(save_file, tmp_dir, framerate=20, frame_pattern='frame_%06d.jpeg', crf=23, delete_tmp_dir=True):
     """Save video from a directory of frames using ffmpeg.
     
     Parameters
@@ -64,7 +64,9 @@ def save_video(save_file, tmp_dir, framerate=20, frame_pattern='frame_%06d.jpeg'
         raise RuntimeError(f"Temporary directory does not exist: {tmp_dir}")
     
     # Create a temporary file listing all frames
-    frame_files = sorted([f for f in os.listdir(tmp_dir) if f.endswith('.jpeg')])
+    frame_files = sorted([
+        f for f in os.listdir(tmp_dir) if (f.endswith('.jpeg') or f.endswith('.jpg') or f.endswith('.png'))
+    ])
     if not frame_files:
         raise RuntimeError(f"No jpeg files found in {tmp_dir}")
     
@@ -114,7 +116,7 @@ def save_video(save_file, tmp_dir, framerate=20, frame_pattern='frame_%06d.jpeg'
         # Clean up
         if os.path.exists(list_file):
             os.remove(list_file)
-        if os.path.exists(save_file):
+        if os.path.exists(save_file) and delete_tmp_dir:
             print(f"Cleaning up temporary directory: {tmp_dir}")
             shutil.rmtree(tmp_dir)
         else:
@@ -192,6 +194,7 @@ def export_frames(
     n_digits: int = 8,
     context_frames: int = 0,
     reader: str = 'cv2',
+    grayscale: bool = True,
 ) -> None:
     """Export frames from a video file to images.
 
@@ -209,6 +212,7 @@ def export_frames(
     reader: backend video reader for frame extraction:
         'cv2': default, works for all datasets except chickadee
         'imageio': much slower but more precise
+    grayscale: true to save to grayscale
 
     """
 
@@ -239,9 +243,9 @@ def export_frames(
 
     # load frames from video
     if reader == 'cv2':
-        frames = get_frames_from_idxs(cap, frame_idxs)
+        frames = get_frames_from_idxs(cap, frame_idxs, grayscale=grayscale)
     elif reader == 'imageio':
-        frames = get_frames_from_idxs(None, frame_idxs, video_file=str(video_file))
+        frames = get_frames_from_idxs(None, frame_idxs, video_file=str(video_file), grayscale=grayscale)
     else:
         raise NotImplementedError
 
@@ -252,7 +256,7 @@ def export_frames(
     for frame, idx, idx_save in zip(frames, frame_idxs, frame_idxs_save):
         cv2.imwrite(
             filename=str(save_dir / f"img{str(idx_save).zfill(n_digits)}.{format}"),
-            img=cv2.cvtColor(frame.transpose(1, 2, 0), cv2.COLOR_RGB2BGR),
+            img=frame.transpose(1, 2, 0),
         )
 
 
@@ -570,17 +574,18 @@ def create_video_grid(
     for i in range(num_videos):
         filter_parts.append(f"[{i}:v]scale={scale_width}:{scale_height}[v{i}]")
 
-    # create xstack layout
-    layout_parts = []
-    for r in range(rows):
-        for c in range(cols):
-            idx = r * cols + c
-            if idx < num_videos:
-                layout_parts.append(f"{c * scale_width}_{r * scale_height}")
-
-    layout = "|".join(layout_parts)
-    filter_complex = "; ".join(
-        filter_parts) + f"; {' '.join(f'[v{i}]' for i in range(num_videos))}xstack=inputs={num_videos}:layout={layout}[vout]"
+    # # create xstack layout (only works with newer ffmpeg versions)
+    # layout_parts = []
+    # for r in range(rows):
+    #     for c in range(cols):
+    #         idx = r * cols + c
+    #         if idx < num_videos:
+    #             layout_parts.append(f"{c * scale_width}_{r * scale_height}")
+    #
+    # layout = "|".join(layout_parts)
+    # input_labels = "".join(f"[v{i}]" for i in range(num_videos))  # No spaces between labels
+    # filter_complex = ";".join(filter_parts) + f";{input_labels}xstack=inputs={num_videos}:layout={layout}[vout]"
+    filter_complex = create_grid_filter(num_videos, rows, cols, scale_width, scale_height)
 
     # build ffmpeg command
     cmd = [
@@ -600,3 +605,85 @@ def create_video_grid(
         print(f"Video successfully created at {save_file}")
     except subprocess.CalledProcessError as e:
         print(f"Error occurred: {e}")
+
+
+def create_grid_filter(num_videos, rows, cols, scale_width, scale_height):
+    filter_parts = []
+
+    # Scale each video
+    for i in range(num_videos):
+        filter_parts.append(f"[{i}:v]scale={scale_width}:{scale_height}[v{i}]")
+
+    # Calculate the maximum width (full row width)
+    max_row_width = cols * scale_width
+
+    # Create horizontal stacks for each row
+    row_labels = []
+    for r in range(rows):
+        start_idx = r * cols
+        end_idx = min(start_idx + cols, num_videos)
+
+        if end_idx > start_idx:
+            num_videos_in_row = end_idx - start_idx
+            inputs = "".join(f"[v{i}]" for i in range(start_idx, end_idx))
+            row_label = f"row{r}"
+
+            # Create horizontal stack
+            filter_parts.append(f"{inputs}hstack=inputs={num_videos_in_row}[{row_label}_unpadded]")
+
+            # Pad the row if it's not full width
+            current_row_width = num_videos_in_row * scale_width
+            if current_row_width < max_row_width:
+                # Center the row by padding equally on both sides
+                filter_parts.append(
+                    f"[{row_label}_unpadded]pad={max_row_width}:{scale_height}:"
+                    f"(ow-iw)/2:0[{row_label}]"
+                )
+            else:
+                # No padding needed, just rename
+                filter_parts.append(f"[{row_label}_unpadded]copy[{row_label}]")
+
+            row_labels.append(f"[{row_label}]")
+
+    # Stack all rows vertically
+    if len(row_labels) > 1:
+        rows_input = "".join(row_labels)
+        filter_parts.append(f"{rows_input}vstack=inputs={len(row_labels)}[vout]")
+    elif len(row_labels) == 1:
+        # If only one row, rename it to vout
+        filter_parts.append(f"[row0]copy[vout]")
+    else:
+        raise ValueError("No videos to process")
+
+    return ";".join(filter_parts)
+
+
+# Doesn't handle 5 videos in 2x3 grid well
+# def create_grid_filter(num_videos, rows, cols, scale_width, scale_height):
+#     filter_parts = []
+#
+#     # Scale each video
+#     for i in range(num_videos):
+#         filter_parts.append(f"[{i}:v]scale={scale_width}:{scale_height}[v{i}]")
+#
+#     # Create horizontal stacks for each row
+#     row_labels = []
+#     for r in range(rows):
+#         start_idx = r * cols
+#         end_idx = min(start_idx + cols, num_videos)
+#
+#         if end_idx > start_idx:
+#             inputs = "".join(f"[v{i}]" for i in range(start_idx, end_idx))
+#             row_label = f"row{r}"
+#             filter_parts.append(f"{inputs}hstack=inputs={end_idx - start_idx}[{row_label}]")
+#             row_labels.append(f"[{row_label}]")
+#
+#     # Stack all rows vertically
+#     if len(row_labels) > 1:
+#         rows_input = "".join(row_labels)
+#         filter_parts.append(f"{rows_input}vstack=inputs={len(row_labels)}[vout]")
+#     else:
+#         # If only one row, rename it to vout
+#         filter_parts.append(f"[row0]copy[vout]")
+#
+#     return ";".join(filter_parts)

@@ -12,7 +12,8 @@ def plot_labeled_frames(
     txt_offset: int = 0,
     height: float = 6.0,
     skeleton=None,
-    skeleton_colors=None
+    skeleton_colors=None,
+    max_plots: int | None = None,
 ) -> None:
     """Plot labels from a csv file on top of frames for a multiview dataset.
 
@@ -34,9 +35,19 @@ def plot_labeled_frames(
     cam_names = list(csv_files.keys())
     base_cam_name = cam_names[0]
 
+    if max_plots is None:
+        max_plots = 10000000
+
     # Loop through the rows
-    for index in csv_files[base_cam_name].index:  # All files have the same indices
-        fig, axes = plt.subplots(2, 3, figsize=(12, height))
+    for counter, index in enumerate(csv_files[base_cam_name].index):  # All files have the same indices
+
+        if counter >= max_plots:
+            break
+
+        if len(cam_names) == 6:
+            fig, axes = plt.subplots(2, 3, figsize=(12, height))
+        elif len(cam_names) == 4:
+            fig, axes = plt.subplots(2, 2, figsize=(7, height))
         axes = axes.flatten()
 
         # Loop through cameras
