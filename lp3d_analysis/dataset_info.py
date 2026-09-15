@@ -527,4 +527,89 @@ dataset_info = {
         'w3d': None,  # scaling factor for crops
         'crop_size': None,  # (width, height)
     },
+    'r24m': {
+        # multi-animal dataset (2 rats/frame); sessions restricted to calibration=4 viewset
+        # (metadata.csv RecordingIndex 29-40) for a consistent 6-camera setup. RecordingIndex
+        # 41,45,46,47,48 (all involving SR6m) were dropped entirely: SR6m has zero valid 3D
+        # mocap reconstruction (animal2 markers are 100% NaN) in every session it appears in,
+        # dataset-wide, not just in this viewset. OOD is instead built from held-out sessions
+        # within the working set, chosen so SR1 and SR2 never appear in InD. Round-robin animal
+        # identities still mean the remaining InD/OOD rats are not fully disjoint (SR3, SR4,
+        # SR5, SR2r, SR4r, SR5r all appear only in InD here).
+        'InD_animals': [
+            '20210203_Recording_SR2red_SR3_social_wvid',    # RecordingIndex 33, SR3/SR2r
+            '20210203_Recording_SR2red_SR5_social_wvid',    # RecordingIndex 34, SR2r/SR5
+            '20210203_Recording_SR3_SR4red_social_wvid',    # RecordingIndex 35, SR3/SR4r
+            '20210203_Recording_SR3_SR5red_social_wvid',    # RecordingIndex 36, SR3/SR5r
+            '20210203_Recording_SR4_SR5red_social_wvid',    # RecordingIndex 37, SR4/SR5r
+            '20210204_Recording_SR2red_SR4_social_wvid',    # RecordingIndex 40, SR2r/SR4
+        ],
+        'OOD_animals': [
+            '20210203_Recording_SR1_SR2_social_wvid',       # RecordingIndex 29, SR1/SR2
+            '20210203_Recording_SR1_SR3_social_wvid',       # RecordingIndex 30, SR1/SR3
+            '20210203_Recording_SR1_SR4_social_wvid',       # RecordingIndex 31, SR4/SR1
+            '20210203_Recording_SR1_SR5_social_wvid',       # RecordingIndex 32, SR1/SR5
+        ],
+        # Camera4 dropped: its raw calibration is ill-conditioned dataset-wide (implausible
+        # principal point, fx/fy mismatch, outlier skew -- confirmed across every calibration
+        # viewset in metadata.csv, worst in this one), and there's no independent 2D observation
+        # source for Camera4 (our labels are projections of 3D points through each camera's own
+        # calibration, so a bundle-adjustment-style refinement using only that data is circular).
+        'cam_names': ['Camera1', 'Camera2', 'Camera3', 'Camera5', 'Camera6'],
+        'keypoints': [
+            'HeadF', 'HeadB', 'HeadL',
+            'SpineF', 'SpineM', 'SpineL',
+            'Offset1', 'Offset2',
+            'HipL', 'HipR',
+            'ShoulderL', 'ShoulderR',
+        ],
+        'skeleton': np.array([
+            # head
+            [0, 1],
+            [1, 2],
+            [2, 0],
+            [0, 3],
+            [1, 3],
+            [2, 3],
+            # torso
+            [3, 4],
+            [4, 5],
+            # trunk offset markers
+            [3, 6],
+            [6, 4],
+            [4, 7],
+            [7, 5],
+            # shoulders
+            [3, 10],
+            [3, 11],
+            # hips
+            [5, 8],
+            [5, 9],
+        ]),
+        'skeleton_colors': [
+            # head
+            'blue',
+            'blue',
+            'blue',
+            'blue',
+            'blue',
+            'blue',
+            # torso
+            'darkred',
+            'darkred',
+            # trunk offset markers
+            'pink',
+            'pink',
+            'pink',
+            'pink',
+            # shoulders
+            'yellow',
+            'limegreen',
+            # hips
+            'dodgerblue',
+            'darkblue',
+        ],
+        'w3d': None,  # scaling factor for crops; TBD once multi-animal cropping is designed
+        'crop_size': (320, 320),  # (width, height)
+    },
 }
