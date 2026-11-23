@@ -612,4 +612,70 @@ dataset_info = {
         'w3d': None,  # scaling factor for crops; TBD once multi-animal cropping is designed
         'crop_size': (320, 320),  # (width, height)
     },
+    '3d-pop': {
+        # multi-animal dataset (2 or 5 pigeons/frame), 4 views. 10-pigeon sessions are not used, and
+        # 2-bird sequences 39 and 50 are excluded (very high NaN rates in 2D labels). "Animals" are
+        # sequences: InD = train sequences, OOD = test sequences (random 50/50 split, seed 0,
+        # stratified by bird count; no sequence appears in both). See scripts/preprocess/3d-pop.py
+        'InD_animals': [
+            'Sequence9_n02_01072022',
+            'Sequence17_n02_13072022',
+            'Sequence21_n02_04072022',
+            'Sequence23_n02_04072022',
+            'Sequence28_n02_04072022',
+            'Sequence32_n02_30062022',
+            'Sequence37_n02_30062022',
+            'Sequence41_n02_29062022',
+            'Sequence46_n02_29062022',
+            'Sequence55_n02_28062022',
+            'Sequence24_n05_04072022',
+            'Sequence29_n05_04072022',
+            'Sequence42_n05_29062022',
+            'Sequence47_n05_29062022',
+            'Sequence53_n05_28062022',
+        ],
+        'OOD_animals': [
+            'Sequence2_n02_01072022',
+            'Sequence4_n02_01072022',
+            'Sequence7_n02_01072022',
+            'Sequence13_n02_13072022',
+            'Sequence15_n02_13072022',
+            'Sequence26_n02_04072022',
+            'Sequence34_n02_30062022',
+            'Sequence44_n02_29062022',
+            'Sequence52_n02_28062022',
+            'Sequence57_n02_28062022',
+            'Sequence5_n05_01072022',
+            'Sequence10_n05_01072022',
+            'Sequence18_n05_13072022',
+            'Sequence35_n05_30062022',
+            'Sequence58_n05_28062022',
+        ],
+        'cam_names': ['Cam1', 'Cam2', 'Cam3', 'Cam4'],
+        'keypoints': [
+            'beak', 'nose', 'leftEye', 'rightEye',
+            'leftShoulder', 'rightShoulder', 'topKeel', 'bottomKeel', 'tail',
+        ],
+        'skeleton': np.array([
+            [0, 1],  # beak-nose
+            [1, 2],  # nose-leftEye
+            [1, 3],  # nose-rightEye
+            [2, 3],  # leftEye-rightEye
+            [4, 5],  # leftShoulder-rightShoulder
+            [4, 6],  # leftShoulder-topKeel
+            [5, 6],  # rightShoulder-topKeel
+            [4, 8],  # leftShoulder-tail
+            [5, 8],  # rightShoulder-tail
+            [6, 7],  # topKeel-bottomKeel
+            [7, 8],  # bottomKeel-tail
+        ]),
+        'skeleton_colors': [
+            'blue', 'blue', 'blue', 'blue',  # head
+            'yellow',  # shoulders
+            'darkred', 'darkred', 'darkred', 'darkred',  # body
+            'limegreen', 'limegreen',  # keel/tail
+        ],
+        'w3d': None,  # scaling factor for crops; TBD
+        'crop_size': (320, 320),  # (width, height) of the cropped dataset, 3d-pop-crop
+    },
 }
