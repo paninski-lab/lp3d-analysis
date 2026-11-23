@@ -700,8 +700,18 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
         'v103_5k_128': 'green',
         'v104_5k_128': 'brown',
 
+        'v160_5k_128': 'orange',   # Olive Green
+        'v161_5k_128': 'lightseagreen',   # Olive Green
+        'v162_5k_128': 'purple',   # Olive Green
+
+        'v120_5k_128': 'steelblue',
+        'v121_5k_128': 'gray',
+        'v122_5k_128': 'brown',
+        'v123_5k_128': 'lightcoral',
+        'v124_5k_128': 'blue',
         'v200_5k_128': 'steelblue',
         'v201_5k_128': 'gray',
+
         
         
         'v0_5k_128_non_linear_eks': 'green',
@@ -825,6 +835,16 @@ def plot_comparison(df_line2, n_points_dict, models_to_plot, color_mapping, perc
             'v105_5k_128': 'MVT 3d loss supervised (4) patch masking',
             'v110_5k_128': 'MVT distilled (3325)',
             'v111_5k_128': 'MVT distilled (1235)',
+
+            'v120_5k_128': 'SDANNCE',
+            'v121_5k_128': 'SLP3D',
+            'v122_5k_128': 'SLP3D + SAM',
+            'v123_5k_128': 'LP3D (cropped ind)',
+            'v124_5k_128': 'LP3D (cropped + SAM)',
+
+            'v160_5k_128': 'ViTPose-B',
+            'v161_5k_128': 'SVT (1000)',
+            'v162_5k_128': 'LP3D (1000)',
 
             'v200_5k_128': 'MVT (vitb_dinov3)',
             'v201_5k_128': 'LP3D (vitb_dinov3)',
