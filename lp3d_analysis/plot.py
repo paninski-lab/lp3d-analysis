@@ -1,23 +1,207 @@
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
+import os 
+import re
 import matplotlib.pyplot as plt
 
 
 plot_colors = {
+    
     'eks_singleview': 'blue',
     'eks_multiview': 'green',
-    'eks_multiview_varinf': '#FF1493',
-    'rngs': 'red',
-    'ensemble_median': 'purple',
-    'ensemble_mean': 'orange',
+    'eks_multiview_varinf': 'limegreen',
+    # 'rngs': 'red',
+    'rngs': 'gray', # in general gray
+    'ensemble_median': 'orange',
+    'ensemble_median_2d_filters': 'orange',
+    'ensemble_median_temporal': 'brown',
+    'ensemble_median_spatial': 'pink',
+    'ensemble_median_spatiotemporal': 'blue',
+    'ensemble_median_2d_filters_updated': 'lightcoral',
+    'non_linear_eks_geometric': 'darkgreen',
+
+
+    'ensemble_mean': 'purple',
     'ensemble_variance': 'brown',
     'labels': '#FFD700', #(Bright Gold)
+    'pca_reprojection': 'pink',
+
+  
+
+    'eks_multiview_varinf_postpred': 'limegreen',
+    'eks_multiview_postpred': 'green',
+    'eks_multiview_varinf_concat': 'limegreen',
+    'eks_multiview_concat': 'green',
+    'eks_multiview_no_object':  'lightcoral',
+    'eks_multiview_no_object_100':  'brown',
+    'eks_multiview_varinf_no_object':  'teal',
+    'non_linear_eks': 'green',
+    'non_linear_eks_varinf': 'lightgreen',
     
+
+
+
+    # varinf releated + smoothing oprions 
+    'eks_multiview_smooth':  'lightcoral',
+    'eks_multiview_varinf_smooth': 'brown', 
+    'eks_multiview_10000':  '#FFD700',
+    'eks_multiview_varinf_10000': 'brown', 
+    'eks_multiview_pca_mean':  'brown',
+    'eks_multiview_quantile_100':  'teal', 
+    'eks_multiview_varinf_quantile_100': 'blue',
+
+    'ens_med_anipose':  'orange',
+    'eks_multiview_videos_new':  'purple',
+    
+    # 'eks_multiview_postpred_3pcs_old': 'lightcoral',
+
+
+    # 'eks_multiview_quantile_50': 'pink',
+    # 'eks_multiview_varinf_quantile_50': 'lightcoral',
+    # 'eks_multiview_varinf_pca_mean':  '#FFD700',
+    # 'eks_multiview_smooth_pca_mean':  'lightcoral', # kind of purple 
 }
 
 
-def organize_data_structure(file_paths, views, seed_dirs, ensemble_methods, ensemble_variances, include_pixel_error= False, n_frames=None):
+def find_prediction_files(directory, view_name):
+
+    """
+    Find files in a directory that match a specific view name pattern.
+    
+    Args:
+        directory (str): Path to the directory to search in
+        view_name (str): Name of the view to search for (e.g., "Cam-A")
+    
+    Returns:
+        list: List of full file paths that match the criteria
+        
+    The function:
+    1. Only processes files (not directories)
+    2. Looks for the view_name using regex pattern that ensures exact matches
+    3. Excludes files containing 'pixel_error'
+    4. Returns full file paths of matches
+    """
+
+    matching_files = []
+    for filename in os.listdir(directory):
+        filepath = os.path.join(directory, filename)
+        # First check if it's a file (not a directory)
+        if os.path.isfile(filepath):
+            # Use regex to find the view name in the filename
+            pattern = rf"(?<![A-Z]){re.escape(view_name)}(?![A-Z])"
+            if re.search(pattern, filename) and 'pixel_error' not in filename:
+                matching_files.append(filepath)
+    return matching_files
+
+def generate_paths_with_models_and_ensembles(
+    dataset_name, 
+    views, 
+    results_dir,
+    model_type,
+    video_dir,
+    seed_dirs, 
+    ensemble_seed, 
+    ensemble_methods, 
+    n_hand_labels, 
+    prediction_data = True,
+    base_path="/teamspace/studios",
+    data_dir="data",
+    studio_dir="this_studio",
+    output_dir="outputs",
+):
+    """
+    Generate paths for ground truth and prediction data with models and ensembles.
+    For cropped dataset like chickadee-crop, returns data in uncropped space (bboxes added).
+    
+    Args:
+        dataset_name (str): Name of the dataset (e.g., 'fly-anipose')
+        views (list): List of view names (e.g., ['A', 'B', 'C'])
+        seed_dirs (list): List of seed directory names (e.g., ['0', '1', '2'])
+        ensemble_seed (str): Seed for ensemble models
+        ensemble_methods (list): List of ensemble method names
+        n_hand_labels (str): Number of hand labels used
+        camera_prefix (str): Prefix for camera views (e.g., "Cam-")
+        base_path (str): Base path for all data (default: "/teamspace/studios")
+        data_dir (str): Directory containing ground truth data (default: "data")
+        studio_dir (str): Directory for studio-specific data (default: "this_studio")
+        output_dir (str): Directory for model outputs (default: "outputs")
+        
+    Returns:
+        tuple: (ground_truth_csvs, file_paths)
+    """
+    In_Dist_paths = {
+        view: os.path.join(base_path, data_dir, dataset_name, f'remapped_CollectedData_{view}.csv')
+        for view in views
+    }
+    if not Path(In_Dist_paths[views[0]]).is_file():
+        In_Dist_paths = {
+            view: os.path.join(base_path, data_dir, dataset_name, f'CollectedData_{view}.csv')
+            for view in views
+        }
+
+    Out_Dist_paths = {
+        view: os.path.join(base_path, data_dir, dataset_name, f'remapped_CollectedData_{view}_new.csv')
+        for view in views
+    }
+    if not Path(Out_Dist_paths[views[0]]).is_file():
+        Out_Dist_paths = {
+            view: os.path.join(base_path, data_dir, dataset_name, f'CollectedData_{view}_new.csv')
+            for view in views
+        }
+
+    if prediction_data:
+        # Generate prediction paths
+        file_paths = {}
+        for view in views:
+            view_data = {}
+            
+            # Add individual model predictions
+            for seed in seed_dirs:
+                base_dir = os.path.join(
+                    base_path, 
+                    studio_dir, 
+                    output_dir,
+                    dataset_name,
+                    results_dir,
+                    f"{model_type}_{n_hand_labels}_{seed}",
+                    video_dir
+                )
+                print(f"base_dir: {base_dir}")
+                print(base_dir)
+                matching_files = find_prediction_files(base_dir, view)
+                if matching_files:
+                    view_data[seed] = matching_files[0] # it was matching_files[0]
+            
+            # Add ensemble predictions
+            if ensemble_methods is not None and ensemble_seed is not None:
+                for method in ensemble_methods:
+                    base_dir = os.path.join(
+                        base_path,
+                        studio_dir,
+                        output_dir,
+                        dataset_name,
+                        results_dir,
+                        f"{model_type}_{n_hand_labels}_{ensemble_seed}",
+                        method,
+                        video_dir
+                    )
+                    matching_files = find_prediction_files(base_dir, view)
+                    if matching_files:
+                        view_data[method] = matching_files[0] # it was matching_files[0]
+            
+            file_paths[view] = view_data
+    else:
+        file_paths = {}
+        print("No prediction data")
+    
+    return In_Dist_paths, Out_Dist_paths, file_paths
+
+
+
+
+def organize_data_structure(file_paths, views, seed_dirs, ensemble_methods, include_pixel_error= False, n_frames=None):
     
     # Determine frame indices
     if isinstance(n_frames, tuple):
@@ -80,11 +264,19 @@ def organize_data_structure(file_paths, views, seed_dirs, ensemble_methods, ense
             organized_data[view]['y'][method] = df.loc[:, df.columns.get_level_values(2) == 'y'].values
             organized_data[view]['likelihood'][method] = df.loc[:, df.columns.get_level_values(2) == 'likelihood'].values
             # now add the x_posterior_var and y_posterior_var only if this method has this information
-            if 'eks' in method:
+            # Add variances only if columns contain data
+            level_2_cols = df.columns.get_level_values(2)
+            
+            # Ensemble variance
+            if any(col == 'x_ens_var' for col in level_2_cols):
                 organized_data[view]['x_ens_var'][method] = df.loc[:, df.columns.get_level_values(2) == 'x_ens_var'].values
                 organized_data[view]['y_ens_var'][method] = df.loc[:, df.columns.get_level_values(2) == 'y_ens_var'].values
+            
+            # Posterior variance
+            if any(col == 'x_posterior_var' for col in level_2_cols):
                 organized_data[view]['x_posterior_var'][method] = df.loc[:, df.columns.get_level_values(2) == 'x_posterior_var'].values
                 organized_data[view]['y_posterior_var'][method] = df.loc[:, df.columns.get_level_values(2) == 'y_posterior_var'].values
+            
 
                 # Add pixel error if requested
             if include_pixel_error:
@@ -103,8 +295,8 @@ def organize_data_structure(file_paths, views, seed_dirs, ensemble_methods, ense
         # frames = end_frame - start_frame
         # n_keypoints = ensemble_variances.shape[2]  # Number of keypoints
         
-        if ensemble_variances is not None:
-            organized_data[view]['x']['ensemble_variance'] = ensemble_variances[start_frame:end_frame, view_idx, :, 0]  # x variances
-            organized_data[view]['y']['ensemble_variance'] = ensemble_variances[start_frame:end_frame, view_idx, :, 1]  # y variances
+        # if ensemble_variances is not None:
+        #     organized_data[view]['x']['ensemble_variance'] = ensemble_variances[start_frame:end_frame, view_idx, :, 0]  # x variances
+        #     organized_data[view]['y']['ensemble_variance'] = ensemble_variances[start_frame:end_frame, view_idx, :, 1]  # y variances
             
-    return organized_data
+    return organized_data 

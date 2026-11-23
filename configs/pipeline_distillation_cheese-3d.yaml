@@ -1,0 +1,49 @@
+# Distillation Pipeline Configuration for cheese-3d
+#
+# Runs TWO passes over the same output directory:
+#   InD  (videos_ind/)  → CollectedData_{view}.csv
+#   OOD  (videos_ood/)  → CollectedData_{view}_new.csv
+#
+# InD animals:  B6, B20, B21, B26, B31, B1 (12 sessions × 6 views)
+# OOD animals:  B32, B33               (4 sessions × 6 views)
+#
+# Frame selection uses per-session balanced K-means so every session
+# contributes equally (n_clusters / n_sessions frames each).
+
+dataset_name: "cheese-3d"
+
+lightning_pose_config: "/teamspace/studios/this_studio/lp3d-analysis/configs/config_cheese-3d.yaml"
+
+base_data_dir: "/teamspace/studios/data"
+pseudo_labeled_base_dir: "/teamspace/studios/this_studio/pseudo_labeled_dataset_cheese-3d_10k_new"
+
+distillation:
+  run: true
+
+  # ── InD settings → CollectedData_{view}.csv ───────────────────────────────
+  # B6, B20, B21, B26, B31 from videos/ + B1 from videos_new/ (symlinked)
+  ind:
+    eks_results_dir: "/teamspace/studios/this_studio/outputs/cheese-3d/SVT_vitb_dinov2/supervised_665_0-2/ensemble_median/videos_ind"
+    video_base_dir: "/teamspace/studios/data/cheese-3d/videos"
+    n_clusters: 600
+    frames_per_video: 10000
+
+  # ── OOD settings → CollectedData_{view}_new.csv ────────────────────────────
+  # B32, B33 only (B1_ephys excluded; symlinked to videos_ood/)
+  ood:
+    eks_results_dir: "/teamspace/studios/this_studio/outputs/cheese-3d/SVT_vitb_dinov2/supervised_665_0-2/ensemble_median/videos_ood"
+    video_base_dir: "/teamspace/studios/data/cheese-3d/videos_new"
+    n_clusters: 200
+    frames_per_video: 10000
+
+  # ── Shared settings ────────────────────────────────────────────────────────
+  camera_params_dir: null   # auto-constructs to .../cheese-3d/calibrations
+  min_frames_per_video: 0
+  use_posterior_variance: true
+  use_random_selection: false
+  extract_frames: true
+  video_extensions: [".mp4", ".avi", ".mov"]
+  copy_existing_data: false   # no per-view CollectedData_BC.csv in source
+  copy_calibrations: true
+  likelihood_threshold: 0.5
+  min_confident_views: 2

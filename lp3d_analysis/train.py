@@ -1,429 +1,393 @@
 """Functions for training."""
-
+import contextlib
 import gc
-import glob
-import os
-import random
-import shutil
+import re
 from pathlib import Path
-from typing import List, Optional, Tuple
 
-import lightning.pytorch as pl
-import numpy as np
-import pandas as pd
 import torch
-from lightning_pose.callbacks import AnnealWeight, UnfreezeBackbone
-from lightning_pose.utils import pretty_print_cfg, pretty_print_str
-from lightning_pose.utils.io import (check_video_paths,
-                                     return_absolute_data_paths,
-                                     return_absolute_path)
-from lightning_pose.utils.predictions import (predict_dataset,
-                                              predict_single_video)
-from lightning_pose.utils.scripts import (  # get_callbacks 
-    calculate_train_batches, 
-    compute_metrics,
-    get_data_module, 
-    get_dataset,
-    get_imgaug_transform, 
-    get_loss_factories, 
-    get_model,
-)
-from moviepy.editor import VideoFileClip
+import os
+from typing import Optional
+from lightning_pose.train import train
+from lightning_pose.api.model import Model
 from omegaconf import DictConfig, OmegaConf
-from typeguard import typechecked
 
+from lp3d_analysis.utils import generate_cropped_csv_file, _get_bbox_path_fn
+# from lp3d_analysis.post_process import _get_bbox_path_fn
 
-@typechecked
-def get_callbacks(
-    cfg_lp: DictConfig,
-    early_stopping=True,
-    lr_monitor=True,
-    ckpt_model=True,
-    backbone_unfreeze=True,
-) -> List:
-
-    callbacks = []
-
-    if early_stopping:
-        early_stopping = pl.callbacks.EarlyStopping(
-            monitor="val_supervised_loss",
-            patience=cfg_lp.training.early_stop_patience,
-            mode="min",
-        )
-        callbacks.append(early_stopping)
-
-    if backbone_unfreeze:
-        unfreeze_backbone_callback = UnfreezeBackbone(cfg_lp.training.unfreezing_epoch)
-        callbacks.append(unfreeze_backbone_callback)
-
-    if lr_monitor:
-        lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval="epoch")
-        callbacks.append(lr_monitor)
-
-    # always save out best model
-    ckpt_best_callback = pl.callbacks.model_checkpoint.ModelCheckpoint(
-        monitor="val_supervised_loss",
-        mode="min",
-        filename="{epoch}-{step}-best",
-        enable_version_counter=False,
-    )
-    callbacks.append(ckpt_best_callback)
-
-
-    
-
-    # we just need this callback for unsupervised models
-    if (cfg_lp.model.losses_to_use != []) and (cfg_lp.model.losses_to_use is not None):
-        anneal_weight_callback = AnnealWeight(**cfg_lp.callbacks.anneal_weight)
-        callbacks.append(anneal_weight_callback)
-
-    return callbacks
-
-
-# TODO: matt, replace this with LP train function
-def train(
-    cfg_lp: DictConfig,
-    results_dir: str,
-    min_steps: int,
-    max_steps: int,
-    milestone_steps: List[int],
-    val_check_interval: int,
-) -> Tuple[str, pl.LightningDataModule, pl.Trainer]:
-
-    MIN_STEPS = min_steps
-    MAX_STEPS = max_steps
-    MILESTONE_STEPS = milestone_steps
-
-    # mimic hydra, change dir into results dir
+# TODO: Replace with contextlib.chdir in python 3.11.
+@contextlib.contextmanager
+def chdir(dir):
     pwd = os.getcwd()
-    os.makedirs(results_dir, exist_ok=True)
-    os.chdir(results_dir)
-
-    # reset all seeds
-    seed = 0
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
-
-    # ----------------------------------------------------------------------------------
-    # set up data/model objects
-    # ----------------------------------------------------------------------------------
-
-    pretty_print_cfg(cfg_lp)
-
-    data_dir, video_dir = return_absolute_data_paths(data_cfg=cfg_lp.data)
-
-    # imgaug transform
-    imgaug_transform = get_imgaug_transform(cfg=cfg_lp)
-
-    # dataset
-    dataset = get_dataset(cfg=cfg_lp, data_dir=data_dir, imgaug_transform=imgaug_transform)
-
-    # datamodule; breaks up dataset into train/val/test
-    data_module = get_data_module(cfg=cfg_lp, dataset=dataset, video_dir=video_dir)
-
-    data_module.setup()
-
-    num_train_frames = len(data_module.train_dataset)
-
-    step_per_epoch = num_train_frames / cfg_lp.training.train_batch_size
-    print(f'step_per_epoch={step_per_epoch}')
-
-    cfg_lp.training.max_epochs = int(MAX_STEPS / step_per_epoch)
-    cfg_lp.training.min_epochs = int(MIN_STEPS / step_per_epoch)
-    cfg_lp.training.lr_scheduler_params.multisteplr.milestones = \
-        [int(s / step_per_epoch) for s in MILESTONE_STEPS]
-
-    # build loss factory which orchestrates different losses
-    loss_factories = get_loss_factories(cfg=cfg_lp, data_module=data_module)
-
-    # model
-    model = get_model(cfg=cfg_lp, data_module=data_module, loss_factories=loss_factories)
-
-    # ----------------------------------------------------------------------------------
-    # set up and run training
-    # ----------------------------------------------------------------------------------
-
-    # logger
-    logger = pl.loggers.TensorBoardLogger("tb_logs", name=cfg_lp.model.model_name)
-
-    callbacks = get_callbacks(cfg_lp, early_stopping=False)
-
-    # calculate number of batches for both labeled and unlabeled data per epoch
-    limit_train_batches = calculate_train_batches(cfg_lp, dataset)
-
-    # set up trainer
-    trainer = pl.Trainer(
-        accelerator="gpu",
-        devices=1,
-        max_epochs=cfg_lp.training.max_epochs,
-        min_epochs=cfg_lp.training.min_epochs,
-        check_val_every_n_epoch=None,
-        val_check_interval=val_check_interval,
-        log_every_n_steps=cfg_lp.training.log_every_n_steps,
-        callbacks=callbacks,
-        logger=logger,
-        # limit_train_batches= int(1),
-        limit_train_batches=limit_train_batches,
-    )
-
-    # train model!
-    trainer.fit(model=model, datamodule=data_module)
-
-    # save config file
-    cfg_file_local = os.path.join(results_dir, "config.yaml")
-    with open(cfg_file_local, "w") as fp:
-        OmegaConf.save(config=cfg_lp, f=fp.name)
-
-    # Ensure the directory exists
-    os.makedirs(os.path.dirname(cfg_file_local), exist_ok=True)
-
-    # ----------------------------------------------------------------------------------
-    # post-training analysis: labeled frames
-    # ----------------------------------------------------------------------------------
-    hydra_output_directory = os.getcwd()
-    print("Hydra output directory: {}".format(hydra_output_directory))
-
-    # get best ckpt
-    best_ckpt = os.path.abspath(trainer.checkpoint_callback.best_model_path)
-    print(f"Best checkpoint: {best_ckpt}")
-
-    # check if best_ckpt is a file
-    if not os.path.isfile(best_ckpt):
-        raise FileNotFoundError("Cannot find checkpoint. Have you trained for too few epochs?")
-
-    # make unaugmented data_loader if necessary
-    if cfg_lp.training.imgaug != "default":
-        cfg_pred = cfg_lp.copy()
-        cfg_pred.training.imgaug = "default"
-        imgaug_transform_pred = get_imgaug_transform(cfg=cfg_pred)
-        dataset_pred = get_dataset(
-            cfg=cfg_pred, data_dir=data_dir, imgaug_transform=imgaug_transform_pred)
-        data_module_pred = get_data_module(
-            cfg=cfg_pred, dataset=dataset_pred, video_dir=video_dir)
-        data_module_pred.setup()
-    else:
-        data_module_pred = data_module
-
-    # predict on all labeled frames (train/val/test)
-    pretty_print_str("Predicting train/val/test images...")
-    # compute and save frame-wise predictions
-    preds_file = os.path.join(hydra_output_directory, "predictions.csv")
-    predict_dataset(
-        cfg=cfg_lp,
-        trainer=trainer,
-        model=model,
-        data_module=data_module_pred,
-        ckpt_file=best_ckpt,
-        preds_file=preds_file,
-    )
-    # compute and save various metrics
-    # for multiview, predict_dataset outputs one pred file per view.
-    multiview_pred_files = [
-        str(Path(hydra_output_directory) / p)
-        for p in Path(hydra_output_directory).glob("predictions_*.csv")
-    ]
-    if len(multiview_pred_files) > 0:
-        preds_file = multiview_pred_files
-    # compute and save various metrics
+    os.chdir(dir)
     try:
-        compute_metrics(cfg=cfg_lp, preds_file=preds_file, data_module=data_module_pred)
-    except Exception as e:
-        print(f"Error computing metrics\n{e}")
-
-    # ----------------------------------------------------------------------------------
-    # clean up
-    # ----------------------------------------------------------------------------------
-    # remove lightning logs
-    shutil.rmtree(os.path.join(results_dir, "lightning_logs"), ignore_errors=True)
-
-    # change directory back
-    os.chdir(pwd)
-
-    # clean up memory
-    del imgaug_transform
-    del dataset
-    del data_module
-    # del data_module_pred
-    del loss_factories
-    del model
-    # del trainer
-    gc.collect()
-    torch.cuda.empty_cache()
-
-    return best_ckpt, data_module_pred, trainer
-
-
-def inference_with_metrics(
-    video_file: str,
-    cfg_lp: DictConfig,
-    preds_file: str,
-    ckpt_file: Optional[str] = None,
-    data_module: Optional[callable] = None,
-    trainer: Optional[pl.Trainer] = None,
-    metrics: bool = True,
-) -> pd.DataFrame:
-
-    # compute predictions if they don't already exist
-    if not os.path.exists(preds_file):
-        print(f"Using checkpoint: {ckpt_file}")
-        preds_df = predict_single_video(
-            video_file=video_file,
-            ckpt_file=ckpt_file,
-            cfg_file=cfg_lp,
-            preds_file=preds_file,
-            data_module=data_module,
-            trainer=trainer,
-        )
-    else:
-        preds_df = pd.read_csv(preds_file, header=[0, 1, 2], index_col=0)
-
-    # compute and save various metrics
-    if metrics:
-        compute_metrics(cfg=cfg_lp, preds_file=preds_file, data_module=data_module)
-
-    gc.collect()
-
-    return preds_df
-
+        yield
+    finally:
+        os.chdir(pwd)
 
 def train_and_infer(
-    cfg_pipe: DictConfig,
     cfg_lp: DictConfig,
-    data_dir: str,
-    results_dir: str,
+    model_dir: str,
     inference_dirs: Optional[list] = None,
-    new_labels_csv: Optional[str] = None,
     overwrite: bool = False,
 ) -> None:
 
-    # Parse params from config
-    min_steps = cfg_pipe.train_networks.min_steps
-    max_steps = cfg_pipe.train_networks.max_steps
-    milestone_steps = cfg_pipe.train_networks.milestone_steps
-    val_check_interval = cfg_pipe.train_networks.val_check_interval
-
-    # Update config
-    cfg_lp.data.data_dir = data_dir
-    if new_labels_csv is not None:
-        cfg_lp.data.csv_file = new_labels_csv
-
-    # TODO: can we get rid of this
-    # Add iteration-specific fields to the config
-    # cfg_lp.training.max_epochs = 10
-    # cfg_lp.training.min_epochs = 10
-    # cfg_lp.training.unfreeze_step = 30
-
     # Check if model has already been trained
-    model_config_checked = os.path.join(results_dir, "config.yaml")
-    # I added them 
-    best_ckpt = None
-    data_module = None
-    trainer = None
+    try:
+        model = Model.from_dir(model_dir)
+    except OSError:
+        model = None
 
-    if os.path.exists(model_config_checked) and not overwrite:
-        print(
-            f'config.yaml found for this model. Skipping training. ' 
-            f'If you want to retrain this model, set overwrite=True '
-            f'OR change cfg_pipeline.train_networks.intermediate_results_dir.'
-        )
-
-        # checkpoint_pattern = os.path.join(
-        #     results_dir, "tb_logs", "*", "version_*", "checkpoints", "best-checkpoint-*.ckpt")
-        # checkpoint_files = glob.glob(checkpoint_pattern)
-        # Look for checkpoint files with more flexible pattern matching
-        checkpoint_patterns = [
-            # Lightning default epoch-step pattern
-            os.path.join(results_dir, "tb_logs", "*", "version_*", "checkpoints", "epoch=*-step=*-best.ckpt"),
-            # Original pattern (legacy)
-            os.path.join(results_dir, "tb_logs", "*", "version_*", "checkpoints", "best-checkpoint-*.ckpt"),
-            # Try direct 'test_model' pattern based on your structure
-            os.path.join(results_dir, "tb_logs", "test_model", "version_*", "checkpoints", "epoch=*-step=*-best.ckpt"),
-            # Fallback pattern for any .ckpt file
-            os.path.join(results_dir, "tb_logs", "*", "version_*", "checkpoints", "*.ckpt")
-        ]
-
-        for pattern in checkpoint_patterns:
-            checkpoint_files = glob.glob(pattern)
-            if checkpoint_files:
-                best_ckpt = sorted(checkpoint_files)[-1]  # Get the latest checkpoint
-                print(f"Found checkpoint: {best_ckpt}")
-                break
-
-        if best_ckpt is None:
-            if overwrite:
-                print("No checkpoints found. Will retrain model since overwrite=True")
-            else:
-                raise FileNotFoundError(
-                    f"No checkpoint files found in {results_dir}/tb_logs/*/version_*/checkpoints/. "
-                    "Either set overwrite=True to retrain the model, or ensure checkpoints exist."
-                )
-
-        
-        # best_ckpt = sorted(checkpoint_files)[-1]  # Get the latest best checkpoint
-        # print(f"Found existing checkpoint: {best_ckpt}")
-        # if checkpoint_files:
-        #     best_ckpt = sorted(checkpoint_files)[-1]  # Get the latest best checkpoint
-
-        # data_module = None
-        # trainer = None
+    if model is None or overwrite:
+        print('Training model:')
+        Path(model_dir).mkdir(parents=True, exist_ok=True)
+        with chdir(model_dir):
+            model = train(cfg=cfg_lp)
+        gc.collect()
+        torch.cuda.empty_cache()
 
     else:
-        print(f"No config.yaml found for this model. Training the model.")
-        best_ckpt, data_module, trainer = train(
-            cfg_lp=cfg_lp.copy(),
-            results_dir=results_dir,
-            min_steps=min_steps,
-            max_steps=max_steps,
-            milestone_steps=milestone_steps,
-            val_check_interval=val_check_interval,
-        )
+        print('Model already exists, skipping training (overwrite not true).')
 
-    if inference_dirs is None:
+    assert model is not None
+
+    if inference_dirs is not None:
+        # Determine if this is a multiview model based on model type, not just data structure
+        model_type = model.config.cfg.model.model_type
+        is_multiview_model = model_type in ['heatmap_multiview', 'heatmap_multiview_transformer']
+        
+        if is_multiview_model: # Use multiview prediction for multiview models
+            
+            # For multiview case, we need to find video files for each view
+            for video_dir in inference_dirs:
+                video_path = os.path.join(cfg_lp.data.data_dir, video_dir)
+                video_files = [f for f in os.listdir(video_path) if f.endswith(".mp4")]
+                view_names = model.config.cfg.data.view_names
+                session_groups = {}
+
+                if not video_files:
+                    # Case 1: videos-for-each-labeled-frame structure
+                    # Look for subdirectories that match session patterns
+                    sub_video_dirs = [
+                        sub_dir for sub_dir in os.listdir(video_path)
+                        if os.path.isdir(os.path.join(video_path, sub_dir))
+                    ]
+                    
+                    print(f"Found {len(sub_video_dirs)} subdirectories in {video_dir}: {sub_video_dirs[:5]}...")  # Show first 5
+                    
+                    # Group subdirectories by session (base name without view suffix)
+                    for sub_video_dir in sub_video_dirs:
+                        sub_path = os.path.join(video_path, sub_video_dir)
+                        sub_files = [f for f in os.listdir(sub_path) if f.endswith(".mp4")]
+                        
+                        if sub_files:  # Only process if there are mp4 files in the subdirectory
+                            # Extract base session name by removing view suffixes from directory name
+                            base_name = sub_video_dir
+                            matched_view = None
+                            
+                            # Find which view this subdirectory belongs to
+                            for view_name in view_names:
+                                if re.search(rf"(?<![0-9a-zA-Z]){re.escape(view_name)}(?![0-9a-zA-Z])", sub_video_dir):
+                                    matched_view = view_name
+                                    # Remove the view name from the base name
+                                    base_name = re.sub(rf"(?<![0-9a-zA-Z]){re.escape(view_name)}(?![0-9a-zA-Z])", "", sub_video_dir)
+                                    # Clean up extra separators
+                                    base_name = re.sub(r'[_-]+', '_', base_name).strip('_-')
+                                    break
+                            
+                            if matched_view:
+                                print(f"Matched subdirectory '{sub_video_dir}' to view '{matched_view}', base_name: '{base_name}'")
+                                if base_name not in session_groups:
+                                    session_groups[base_name] = {}
+                                
+                                # Store all video files in this view's subdirectory
+                                if matched_view not in session_groups[base_name]:
+                                    session_groups[base_name][matched_view] = []
+                                
+                                for sub_file in sub_files:
+                                    session_groups[base_name][matched_view].append(os.path.join(sub_video_dir, sub_file))
+                            else:
+                                print(f"No view match found for subdirectory '{sub_video_dir}' (available views: {view_names})")
+                
+                else:
+                    # Case 2: videos_debug structure (original logic)
+                    # Group video files by session (same base name but different view suffixes)
+                    for video_file in video_files:
+                        # Extract base session name by removing view suffixes
+                        base_name = video_file
+                        matched_view = None
+                        
+                        # Find which view this video file belongs to using regex-like matching
+                        for view_name in view_names:
+                            # Check if view name is in the filename with proper delimiters
+                            if re.search(rf"(?<![0-9a-zA-Z]){re.escape(view_name)}(?![0-9a-zA-Z])", Path(video_file).name):
+                                matched_view = view_name
+                                # Remove the view name from the base name
+                                base_name = re.sub(rf"(?<![0-9a-zA-Z]){re.escape(view_name)}(?![0-9a-zA-Z])", "", Path(video_file).name)
+                                break
+                        
+                        if matched_view:
+                            if base_name not in session_groups:
+                                session_groups[base_name] = {}
+                            
+                            if matched_view not in session_groups[base_name]:
+                                session_groups[base_name][matched_view] = video_file
+                            else:
+                                print(f"Warning: Multiple files found for view {matched_view} in session {base_name}")
+                
+                # Process each session that has all required views
+                print(f"Found {len(session_groups)} session groups: {list(session_groups.keys())}")
+                for session_name, view_files in session_groups.items():
+                    print(f"Session '{session_name}' has views: {list(view_files.keys())} (required: {view_names})")
+                    if len(view_files) == len(view_names):
+                        # All views are present for this session
+                        
+                        # Handle different file structures
+                        if isinstance(list(view_files.values())[0], list):
+                            # Case 1: videos-for-each-labeled-frame (multiple files per view)
+                            # Process each combination of files across views
+                            view_file_lists = [view_files[view_name] for view_name in view_names]
+                            
+                            # For simplicity, let's process all files in the first view and find corresponding files in other views
+                            # This assumes all views have the same set of file names
+                            first_view_files = view_file_lists[0]
+                            
+                            for file_idx, first_view_file in enumerate(first_view_files):
+                                video_files_per_view = []
+                                missing_views = []
+                                file_name = Path(first_view_file).name
+                                
+                                # Find corresponding files in all views
+                                for view_idx, view_name in enumerate(view_names):
+                                    view_file_list = view_file_lists[view_idx]
+                                    # Find file with same name in this view
+                                    corresponding_file = None
+                                    for candidate_file in view_file_list:
+                                        if Path(candidate_file).name == file_name:
+                                            corresponding_file = candidate_file
+                                            break
+                                    
+                                    if corresponding_file:
+                                        video_files_per_view.append(os.path.join(video_path, corresponding_file))
+                                    else:
+                                        missing_views.append(view_name)
+                                        break
+                                
+                                if missing_views:
+                                    print(f"Warning: Missing views {missing_views} for file {file_name} in session {session_name}")
+                                    continue
+                                
+                                # Check if inference files already exist for all views
+                                all_exist = True
+                                for view_idx, (view_name, video_file) in enumerate(zip(view_names, video_files_per_view)):
+                                    relative_path = os.path.relpath(video_file, video_path)
+                                    view_output_dir = model.model_dir / video_dir / Path(relative_path).parent
+                                    video_name = Path(video_file).stem
+                                    inference_csv_file = view_output_dir / f"{video_name}.csv"
+                                    if not inference_csv_file.exists() or overwrite:
+                                        all_exist = False
+                                        break
+                                
+                                if all_exist and not overwrite:
+                                    print(f"Skipping inference for {file_name} in session {session_name}, inference files already exist.")
+                                    continue
+                                
+                                try:
+                                    print(f"Running inference on {file_name} in session {session_name} with {len(video_files_per_view)} views")
+                                    print(f"View names order: {view_names}")
+                                    print(f"Video files order: {[Path(f).name for f in video_files_per_view]}")
+                                    
+                                    # Create output directories for each view to match input structure
+                                    view_output_dirs = []
+                                    for view_idx, (view_name, video_file) in enumerate(zip(view_names, video_files_per_view)):
+                                        relative_path = os.path.relpath(video_file, video_path)
+                                        view_output_dir = model.model_dir / video_dir / Path(relative_path).parent
+                                        view_output_dir.mkdir(parents=True, exist_ok=True)
+                                        view_output_dirs.append(view_output_dir)
+                                        print(f"View {view_name} output directory: {view_output_dir}")
+                                    
+                                    # For videos-for-each-labeled-frame structure, we need to create filenames
+                                    # that include view names so collect_video_files_by_view can match them
+                                    modified_video_files = []
+                                    # Create temp directory in the model output directory, not the data directory
+                                    temp_output_dir = model.model_dir / video_dir / "temp_multiview_output"
+                                    temp_output_dir.mkdir(parents=True, exist_ok=True)
+                                    
+                                    for view_name, video_file in zip(view_names, video_files_per_view):
+                                        # Create a path with view name embedded for matching
+                                        video_path_obj = Path(video_file)
+                                        # Insert view name before the file extension
+                                        modified_name = f"{video_path_obj.stem}_{view_name}{video_path_obj.suffix}"
+                                        # Create modified path in the temp output directory, not the data directory
+                                        modified_path = temp_output_dir / modified_name
+                                        
+                                        # Create symbolic link with the modified name
+                                        if modified_path.exists():
+                                            modified_path.unlink()
+                                        
+                                        try:
+                                            # Try to create symbolic link
+                                            modified_path.symlink_to(video_path_obj)
+                                        except (OSError, NotImplementedError):
+                                            # Fallback: copy file if symlinks not supported
+                                            import shutil
+                                            shutil.copy2(video_file, modified_path)
+                                        
+                                        modified_video_files.append(str(modified_path))
+                                    
+                                    try:
+                                        # Run multiview prediction with temporary output directory
+                                        result = model.predict_on_video_file_multiview(
+                                            video_file_per_view=modified_video_files,
+                                            output_dir=temp_output_dir,
+                                            compute_metrics=False,
+                                        )
+                                        
+                                        # Move the prediction files to the correct locations
+                                        for view_idx, (view_name, original_video_file) in enumerate(zip(view_names, video_files_per_view)):
+                                            # Find the generated CSV file in temp directory
+                                            modified_video_name = Path(modified_video_files[view_idx]).stem
+                                            temp_csv_file = temp_output_dir / f"{modified_video_name}.csv"
+                                            
+                                            # Determine the correct output location
+                                            original_video_name = Path(original_video_file).stem
+                                            target_csv_file = view_output_dirs[view_idx] / f"{original_video_name}.csv"
+                                            
+                                            if temp_csv_file.exists():
+                                                # Move the file to the correct location
+                                                import shutil
+                                                shutil.move(str(temp_csv_file), str(target_csv_file))
+                                                print(f"Moved prediction file to: {target_csv_file}")
+                                                
+                                                bbox_path = _get_bbox_path_fn(Path(target_csv_file), Path(model.model_dir), Path(cfg_lp.data.data_dir))
+                                                if bbox_path.exists():
+                                                    uncropped_file = target_csv_file.with_stem(target_csv_file.stem + "_uncropped")
+                                                    generate_cropped_csv_file(str(target_csv_file), str(bbox_path), str(uncropped_file), 320, 320, "add")
+                                                    print(f"Created uncropped file: {uncropped_file}")
+                                            else:
+                                                print(f"Warning: Expected prediction file not found: {temp_csv_file}")
+                                        
+                                        print(f"Successfully completed inference for {file_name} in session {session_name}")
+                                        
+                                    finally:
+                                        # Clean up the temporary symbolic links/copies and temp directory
+                                        for modified_file in modified_video_files:
+                                            try:
+                                                Path(modified_file).unlink()
+                                            except FileNotFoundError:
+                                                pass
+                                        
+                                        # Clean up temp output directory
+                                        try:
+                                            import shutil
+                                            if temp_output_dir.exists():
+                                                shutil.rmtree(temp_output_dir)
+                                        except Exception as cleanup_error:
+                                            print(f"Warning: Could not clean up temp directory {temp_output_dir}: {cleanup_error}")
+                                                
+                                except Exception as e:
+                                    print(f"Error during inference for {file_name} in session {session_name}: {str(e)}")
+                                    import traceback
+                                    traceback.print_exc()
+                                    continue
+                        
+                        else:
+                            # Case 2: videos_debug (single file per view, original logic)
+                            video_files_per_view = []
+                            missing_views = []
+                            
+                            # Ensure video files are in the same order as view_names
+                            for view_name in view_names:
+                                if view_name in view_files:
+                                    video_files_per_view.append(os.path.join(video_path, view_files[view_name]))
+                                else:
+                                    missing_views.append(view_name)
+                            
+                            if missing_views:
+                                print(f"Warning: Missing views {missing_views} for session {session_name}")
+                                continue
+                            
+                            # All views found, run prediction
+                            # Set output_dir to preserve directory structure similar to single view case
+                            first_video_file = video_files_per_view[0]
+                            relative_path = os.path.relpath(first_video_file, video_path)
+                            output_dir = (model.model_dir / video_dir / Path(relative_path)).parent
+                            
+                            # Check if inference files already exist for all views
+                            all_exist = True
+                            for video_file in video_files_per_view:
+                                video_name = Path(video_file).stem
+                                inference_csv_file = output_dir / f"{video_name}.csv"
+                                if not inference_csv_file.exists() or overwrite:
+                                    all_exist = False
+                                    break
+                            
+                            if all_exist and not overwrite:
+                                print(f"Skipping inference for session {session_name}, all inference files already exist.")
+                                continue
+                            
+                            try:
+                                print(f"Running inference on session {session_name} with {len(video_files_per_view)} views")
+                                print(f"View names order: {view_names}")
+                                print(f"Video files order: {[Path(f).name for f in video_files_per_view]}")
+                                print(f"Output directory: {output_dir}")
+                                
+                                # Ensure output directory exists
+                                output_dir.mkdir(parents=True, exist_ok=True)
+                                
+                                model.predict_on_video_file_multiview(
+                                    video_file_per_view=video_files_per_view,
+                                    output_dir=output_dir,
+                                    compute_metrics=False,
+                                )
+                                print(f"Successfully completed inference for session {session_name}")
+                            except Exception as e:
+                                print(f"Error during inference for session {session_name}: {str(e)}")
+                                import traceback
+                                traceback.print_exc()
+                                continue
+                    else:
+                        print(f"Warning: Session {session_name} missing some views. Found: {list(view_files.keys())}, Required: {view_names}")
+
+        else: # for single-view models (even if multiple views exist in data)
+            # Run inference on all InD/OOD videos and compute unsupervised metrics
+            for video_dir in inference_dirs:
+                video_path = os.path.join(cfg_lp.data.data_dir, video_dir)
+                video_files = [f for f in os.listdir(video_path) if f.endswith(".mp4")]
+
+                if not video_files:
+                    sub_video_dirs = [
+                        sub_dir for sub_dir in os.listdir(video_path)
+                        if os.path.isdir(os.path.join(video_path, sub_dir))
+                    ]
+                    for sub_video_dir in sub_video_dirs:
+                        sub_path = os.path.join(video_path, sub_video_dir)
+                        sub_files = [f for f in os.listdir(sub_path) if f.endswith(".mp4")]
+                        video_files += [os.path.join(sub_video_dir, f) for f in sub_files]
+
+                for video_file in video_files:
+                    # Set output_dir such that it preserves directory structure of videos dir:
+                    # when video_file == bar.mp4 then output_dir == model_dir / video_dir
+                    # when video_file == foo/bar.mp4 then output_dir == model_dir / video_dir / foo
+                    output_dir = (model.model_dir / video_dir / video_file).parent
+                    inference_csv_file = (output_dir / Path(video_file).with_suffix(".csv").name)
+                    if inference_csv_file.exists() and not overwrite:
+                        print(f"Skipping inference for {video_file}, Inference file already exists.")
+                        continue
+                    
+                    model.predict_on_video_file(
+                        video_file=os.path.join(video_path, video_file),
+                        output_dir=output_dir,
+                        compute_metrics=False,
+                    )
+                    
+                    bbox_path = _get_bbox_path_fn(Path(inference_csv_file), Path(model.model_dir), Path(cfg_lp.data.data_dir))
+                    if bbox_path.exists():
+                        uncropped_file = inference_csv_file.with_stem(inference_csv_file.stem + "_uncropped")
+                        generate_cropped_csv_file(str(inference_csv_file), str(bbox_path), str(uncropped_file), 320, 320, "add")
+                        print(f"Created uncropped file: {uncropped_file}")
+    else:
         print(
             'inference_dirs None, not running inference. To run inference on videos in a given '
             'directory add it to cfg_pipeline.train_networks.inference_dirs'
         )
-        return
-
-    # if best_ckpt is None:
-    #     raise ValueError("No checkpoint file available for inference") 
-    
-    # Run inference on all InD/OOD videos and compute unsupervised metrics
-    for video_dir in inference_dirs:
-        video_path = os.path.join(data_dir, video_dir)
-        video_files = [f for f in os.listdir(video_path) if f.endswith(".mp4")]
-
-        if not video_files:
-            sub_video_dirs = [
-                sub_dir for sub_dir in os.listdir(video_path)
-                if os.path.isdir(os.path.join(video_path, sub_dir))
-            ]
-            for sub_video_dir in sub_video_dirs:
-                sub_path = os.path.join(video_path, sub_video_dir)
-                sub_files = [f for f in os.listdir(sub_path) if f.endswith(".mp4")]
-                video_files += [os.path.join(sub_video_dir, f) for f in sub_files]
-
-        for video_file in video_files:
-            inference_csv = os.path.join(
-                results_dir, video_dir, video_file.replace(".mp4", ".csv")
-            )
-            if os.path.exists(inference_csv) and not overwrite:
-                print(f"Inference file {inference_csv} already exists. "
-                      f"Skipping inference for {video_file}")
-                continue 
-
-            inference_with_metrics(
-                video_file=os.path.join(video_path, video_file),
-                cfg_lp=cfg_lp.copy(),
-                preds_file=inference_csv,
-                ckpt_file=best_ckpt,
-                data_module=data_module,
-                trainer=trainer,
-                metrics=False,
-            )
-
-        
+    return

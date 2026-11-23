@@ -1,20 +1,119 @@
-import os 
+import os
 import numpy as np
 import pandas as pd
+import traceback
 
+import glob
+import shutil
+
+from typing import List, Tuple, Dict, Optional, Union, Any, Callable
+from omegaconf import DictConfig
+from pathlib import Path
+
+from lightning_pose.utils import io as io_utils
+from lightning_pose.metrics import pixel_error
 from lightning_pose.utils.scripts import (
     compute_metrics,
+    compute_metrics_single,
 )
 
-from omegaconf import DictConfig
+from lp3d_analysis.io import find_sequence_dir
+
+def rename_pixel_error_files(directory: str) -> None:
+    """Rename pixel error files from _pixel_error_new.csv to _new_pixel_error.csv"""
+    pattern = os.path.join(directory, "*_pixel_error_new.csv")
+    for old_path in glob.glob(pattern):
+        new_path = old_path.replace("_pixel_error_new.csv", "_new_pixel_error.csv")
+        if os.path.exists(old_path):
+            shutil.move(old_path, new_path)
+            print(f"Renamed: {os.path.basename(old_path)} -> {os.path.basename(new_path)}")
 
 
-#TODO 
-# 1. need to make a decision about the naming of the output file and how to access the correct model name because it is not part of the results_dir 
-# 2. change names of variables so will look better in the code and make more sense 
-# 3. should I use cfg_lp_copy?
-#4 I need to make sure that I don't make modification to the original config file 
+def add_variance_columns(column_structure):
+    """
+    Add variance columns to the column structure.
+    
+    Args:
+        column_structure: Original MultiIndex column structure
+        
+    Returns:
+        Updated MultiIndex with added variance columns
+    """
+    current_tuples = list(column_structure)
+    
+    # Add variance columns for each bodypart
+    new_tuples = []
+    for scorer, bodypart, coord in current_tuples:
+        new_tuples.append((scorer, bodypart, coord))
+        if coord == 'likelihood':  # After each likelihood, add variance columns
+            new_tuples.append((scorer, bodypart, 'x_ens_var'))
+            new_tuples.append((scorer, bodypart, 'y_ens_var'))
+    
+    # Create new column structure with added variance columns
+    return pd.MultiIndex.from_tuples(new_tuples, names=['scorer', 'bodyparts', 'coords'])
 
+
+
+def fill_ensemble_results(
+    results_df: pd.DataFrame, 
+    ensemble_preds: np.ndarray, 
+    ensemble_vars: np.ndarray, 
+    ensemble_likes: np.ndarray, 
+    keypoint_names: List[str], 
+    column_structure: pd.MultiIndex
+) -> None:
+    """
+    Fill in ensemble results into the DataFrame.
+    
+    Args:
+        results_df: DataFrame to fill with results
+        ensemble_preds: Array of ensemble predictions (x,y coordinates)
+        ensemble_vars: Array of ensemble variances
+        ensemble_likes: Array of ensemble likelihoods
+        keypoint_names: List of keypoint names
+        column_structure: Column structure of the DataFrame
+    """
+    for k, bp in enumerate(keypoint_names):
+        # Use scorer from column_structure if not in bp; assume first scorer applies
+        scorer = bp.split('/', 1)[0] if '/' in bp else column_structure.levels[0][0]
+        bodypart = bp.split('/', 1)[1] if '/' in bp else bp
+
+        # Fill coordinates and likelihood
+        results_df.loc[:, (scorer, bodypart, 'x')] = ensemble_preds[:, k, 0]
+        results_df.loc[:, (scorer, bodypart, 'y')] = ensemble_preds[:, k, 1]
+        results_df.loc[:, (scorer, bodypart, 'likelihood')] = ensemble_likes[:, k]
+        results_df.loc[:, (scorer, bodypart, 'x_ens_var')] = ensemble_vars[:, k, 0]
+        results_df.loc[:, (scorer, bodypart, 'y_ens_var')] = ensemble_vars[:, k, 1]
+
+def concatenate_csv_files(files: List[str], is_marker_file: bool = True) -> pd.DataFrame:
+    """Concatenate multiple CSV files into a single DataFrame with proper indexing.
+    
+    Args:
+        files: List of CSV file paths to concatenate
+        is_marker_file: If True, reads as marker file with multi-level headers.
+                        If False, reads as bbox file with single-level header.
+        
+    Returns:
+        Concatenated DataFrame
+    """
+    concat_df = pd.DataFrame()
+    for file in files:
+        # Read differently based on file type
+        if is_marker_file:
+            df = pd.read_csv(file, header=[0, 1, 2], index_col=0)
+            df = io_utils.fix_empty_first_row(df)
+        else:
+            df = pd.read_csv(file, index_col=0)
+        
+        # Ensure unique indices
+        if not concat_df.empty:
+            next_index = concat_df.index[-1] + 1
+            df.index = df.index + next_index
+        
+        concat_df = pd.concat([concat_df, df]) if not concat_df.empty else df
+    
+    return concat_df   
+    
 def extract_ood_frame_predictions(
     cfg_lp: DictConfig,
     data_dir: str,
@@ -22,16 +121,32 @@ def extract_ood_frame_predictions(
     overwrite: bool,
     video_dir: str,
 ) -> None:
+    """
+    Extract out-of-distribution frame predictions from snippets.
     
-    new_csv_files = [f for f in os.listdir(data_dir) if f.endswith('_new.csv')]   
-    # Use cfg_lp instead of cfg_lp_copy
-    #cfg_lp.data.csv_file = new_csv_files it was not here but maybe it should be here?
+    Args:
+        cfg_lp: Configuration dictionary
+        data_dir: Directory containing input data
+        results_dir: Directory for output results
+        overwrite: Whether to overwrite existing files
+        video_dir: Directory name for video files
+    """
+    new_csv_files = [f for f in os.listdir(data_dir) if f.endswith('_new.csv')]
+    print(f"the new csv files are {new_csv_files}")
 
     for csv_file in new_csv_files:
         # load original csv 
         file_path = os.path.join(data_dir, csv_file)
+        print(f"the file path is {file_path}")
         original_df = pd.read_csv(file_path, header=[0,1,2], index_col=0)
+        original_df = io_utils.fix_empty_first_row(original_df) 
         original_index = original_df.index  
+        
+        # Debug the first frame in the index
+        print(f"Original index has {len(original_index)} entries")
+        if len(original_index) > 0:
+            first_frame = original_index[0]
+            print(f"First frame in index: {first_frame}")
 
         # load each of the new csv files and iterate through the index 
         prediction_name = '_'.join(csv_file.split('_')[1:])
@@ -42,29 +157,39 @@ def extract_ood_frame_predictions(
             continue
         
         results_list = []
+        missing_snippets = 0
+        even_frame_snippets = 0
         #file_path = os.path.join(data_dir, csv_file)
         #df = pd.read_csv(file_path, header=[0,1,2], index_col=0)
         
-    
-
         # for img_path in df.index:
         for img_path in original_index:
             # process the paths 
             relative_img_path = '/'.join(img_path.split('/')[1:]) # removed 'labeled-data/'
             snippet_path = relative_img_path.replace('png', 'mp4')
-            
+
             # Load the 51-frame csv file 
             snippet_file = os.path.join(results_dir, video_dir , snippet_path.replace('mp4', 'csv'))
             if os.path.exists(snippet_file):
                 snippet_df = pd.read_csv(snippet_file, header=[0,1,2], index_col=0)
+                snippet_df = io_utils.fix_empty_first_row(snippet_df)
 
                 # extract center frame 
-                assert snippet_df.shape[0] & 2 != 0 # ensure odd number of frames 
-                idx_frame = int(np.floor(snippet_df.shape[0] / 2))
+                frame_count = snippet_df.shape[0]
+                if frame_count % 2 == 0:
+                    print(f"Warning: Snippet {snippet_file} has even number of frames: {frame_count}")
+                    even_frame_snippets += 1
+                    continue
+                idx_frame = int(np.floor(frame_count / 2))
+                # assert snippet_df.shape[0] % 2 != 0 # ensure odd number of frames
+                # idx_frame = int(np.floor(snippet_df.shape[0] / 2))
                 
                 # create results with original image path as index 
-                result = snippet_df[snippet_df.index == idx_frame].rename(index={idx_frame: img_path})
+                # result = snippet_df[snippet_df.index == idx_frame].rename(index={idx_frame: img_path})
+                result = snippet_df.iloc[[idx_frame]].rename(index={idx_frame: img_path})
                 results_list.append(result)
+            else:
+                missing_snippets += 1
 
         # combine all results 
         if results_list:
@@ -77,29 +202,837 @@ def extract_ood_frame_predictions(
             results_df.to_csv(preds_file)
             print(f'Saved predictions to {preds_file}')
 
-            # make sure I don't make any changes to the original cfg_lp
-            cfg_lp.data.csv_file = csv_file
-            print(f"the cfg_lp is {cfg_lp}")
         
             try:
-                compute_metrics(cfg=cfg_lp, preds_file=preds_file, data_module=None)
+                compute_metrics_single(
+                    cfg=cfg_lp,
+                    labels_file=os.path.join(cfg_lp.data.data_dir, csv_file),
+                    preds_file=preds_file,
+                    data_module=None
+                )
                 print(f"Succesfully computed metrics for {preds_file}")
             except Exception as e:
                 print(f"Error computing metrics\n{e}")
+                print(traceback.format_exc())
 
+
+
+def process_concatenated_snippets(
+    output_dir: str,
+    seed_dirs: List[str],
+    inference_dir: str,
+    img_paths_by_dir: Dict[str, List[str]],
+    view: str
+) -> List[pd.DataFrame]:
+    """
+    Process concatenated snippets for a view.
+    
+    Args:
+        output_dir: Directory for output files
+        seed_dirs: List of seed directories
+        inference_dir: Directory name for inference results
+        img_paths_by_dir: Dictionary mapping directories to image paths
+        view: Camera view name
         
-    # look for all files that end in _new.csv -> these are OOD labels
-     # loop through these
-     #load the csv file and iterate through the rows/index
-    # loop through these
-    # for each, load the csv file, and iterate through the rows/index
-    # 'labeled-data/<vid_name>/img<#>.png'
-    # s = 'labeled-data/vid_name/img0000.png'
-    # s2 = '/'.join(s.split('/')[1:])
-    # s3 = s2.replace('png', 'mp4')
-    # load 51-frame csv file
-    # extract center frame
-    # put in dataframe
-    # save out predictions_<cam_name>.csv
-    # compute pixel
+    Returns:
+        List of DataFrames with processed results
+    """
+    results_list = []
+    
+    for sequence_name, img_paths in img_paths_by_dir.items():
+        # Find the appropriate directory name pattern for this sequence
+        sequence_dir = find_sequence_dir(output_dir, sequence_name, view)
+        if not sequence_dir:
+            continue
+        
+        concat_file = os.path.join(output_dir, sequence_dir, "concatenated_sequence.csv")
+        if not os.path.exists(concat_file):
+            continue
+            
+        try:
+            # Load the concatenated CSV with multi-index columns
+            concat_df = pd.read_csv(concat_file, header=[0, 1, 2], index_col=0)
+            concat_df = io_utils.fix_empty_first_row(concat_df)
+            
+            # Find first seed directory with this sequence
+            first_seed_dir = next(
+                (os.path.join(sd, inference_dir, sequence_dir) 
+                 for sd in seed_dirs 
+                 if os.path.exists(os.path.join(sd, inference_dir, sequence_dir))),
+                None
+            )
+            
+            if not first_seed_dir:
+                continue
+                
+            # Get sorted CSV files (original snippets)
+            csv_files = sorted(
+                [f for f in os.listdir(first_seed_dir) 
+                 if f.endswith(".csv") and not f.endswith("_uncropped.csv")],
+                key=lambda x: int(os.path.splitext(x)[0].replace("img", ""))
+            )
+            
+            # Map each original image path to its position in the original sequence of files
+            img_to_position = {}
+            for i, csv_file in enumerate(csv_files):
+                base_name = os.path.splitext(csv_file)[0]
+                img_path = f"labeled-data/{sequence_name}/{base_name}.png"
+                if img_path in img_paths:
+                    img_to_position[img_path] = i
+        
+            # Sort img_paths by their position in the sequence
+            img_paths_ordered = sorted(img_paths, key=lambda x: img_to_position.get(x, float('inf')))
+            
+            # Process each snippet (51 frames each) and extract the center frame
+            # snippet_length = 51  # Typical snippet length
+            snippet_length = concat_df.shape[0] // len(csv_files)
+            print(f"Snippet length is : {snippet_length}")
+            for i, img_path in enumerate(img_paths_ordered):
+                # Calculate the center frame index for this snippet
+                center_idx = i * snippet_length + (snippet_length // 2)
+                if center_idx < concat_df.shape[0]:
+                    # Extract the center frame and set index
+                    center_frame = concat_df.iloc[[center_idx]]
+                    center_frame.index = [img_path]
+                    results_list.append(center_frame)
+        
+        except Exception as e:
+            print(f"Error processing concatenated sequence {concat_file}: {e}")
+            continue
+            
+    return results_list
 
+
+def process_individual_snippets(
+    output_dir: str,
+    original_index: pd.Index
+) -> List[pd.DataFrame]:
+    """
+    Process individual snippets for a view.
+    
+    Args:
+        output_dir: Directory for output files
+        original_index: Original image index
+        
+    Returns:
+        List of DataFrames with processed results
+    """
+    results_list = []
+    
+    for img_path in original_index:
+        try:
+            sequence_name = img_path.split('/')[1]  # e.g., "180623_000_bot"
+            base_filename = os.path.splitext(os.path.basename(img_path))[0]  # e.g., "img107262"
+            
+            # Get the sequence CSV path
+            snippet_file = os.path.join(output_dir, sequence_name, f"{base_filename}.csv")
+            
+            if not os.path.exists(snippet_file):
+                continue
+                
+            # Load the CSV with multi-index columns
+            snippet_df = pd.read_csv(snippet_file, header=[0, 1, 2], index_col=0)
+            snippet_df = io_utils.fix_empty_first_row(snippet_df)
+            
+            # Ensure odd number of frames
+            frame_count = snippet_df.shape[0]
+            if frame_count % 2 == 0:
+                print(f"Warning: Snippet {snippet_file} has even number of frames: {frame_count}")
+                continue
+                
+            idx_frame = int(np.floor(frame_count / 2))  # Get center frame index
+            
+            # Extract center frame and set index
+            center_frame = snippet_df.iloc[[idx_frame]]  # Keep as DataFrame with one row
+            center_frame.index = [img_path]
+            results_list.append(center_frame)
+                
+        except Exception as e:
+            print(f"Error processing individual snippet for {img_path}: {e}")
+            continue
+            
+    return results_list
+
+
+def process_final_predictions(
+    view: str,
+    output_dir: str,
+    seed_dirs: List[str],
+    inference_dir: str,
+    cfg_lp: DictConfig,
+    use_concatenated: bool = False
+) -> None:
+    """
+    Process and save final predictions for a view, computing metrics.
+    
+    Args:
+        view: The camera view name
+        output_dir: Directory where outputs will be saved
+        seed_dirs: List of seed directories
+        inference_dir: Directory name containing inference results
+        cfg_lp: Configuration dictionary
+        use_concatenated: If True, process concatenated snippets; if False, process individual snippets
+    """
+    # Load original CSV file to get frame paths
+    orig_pred_file = os.path.join(seed_dirs[0], inference_dir, f'predictions_{view}_new.csv')
+    try:
+        original_df = pd.read_csv(orig_pred_file, header=[0, 1, 2], index_col=0)
+        original_df = io_utils.fix_empty_first_row(original_df)
+        original_index = original_df.index
+    except Exception as e:
+        print(f"Error loading original prediction file {orig_pred_file}: {e}")
+        return
+    
+    results_list = []
+    
+    if use_concatenated:
+        # Group image paths by their directories for concatenated processing
+        img_paths_by_dir = {}
+        for img_path in original_index:
+            # Get sequence name (directory)
+            sequence_name = img_path.split('/')[1]  # e.g., "180623_000_bot"
+            if sequence_name not in img_paths_by_dir:
+                img_paths_by_dir[sequence_name] = []
+            img_paths_by_dir[sequence_name].append(img_path)
+        
+        results_list = process_concatenated_snippets(
+            output_dir=output_dir,
+            seed_dirs=seed_dirs,
+            inference_dir=inference_dir,
+            img_paths_by_dir=img_paths_by_dir,
+            view=view
+        )
+    else:
+        # Process individual snippets
+        results_list = process_individual_snippets(
+            output_dir=output_dir,
+            original_index=original_index
+        )
+    
+    if results_list:
+        try:
+            # Combine all results in original order
+            results_df = pd.concat(results_list)
+            results_df = results_df.reindex(original_index)  # Reindex to match original
+            results_df.loc[:,("set", "", "")] = "train"  # Add "set" column for labeled data predictions
+            
+            # Save predictions
+            preds_file = os.path.join(output_dir, f'predictions_{view}_new.csv')
+            results_df.to_csv(preds_file)
+            print(f"Saved combined predictions to {preds_file}")
+            
+            # Compute metrics
+            cfg_lp_view = cfg_lp.copy()
+            cfg_lp_view.data.csv_file = [f'CollectedData_{view}_new.csv']
+            cfg_lp_view.data.view_names = [view]
+            
+            compute_metrics(cfg=cfg_lp_view, preds_file=[preds_file], data_module=None)
+            print(f"Successfully computed metrics for {preds_file}")
+        except Exception as e:
+            print(f"Error in final processing for view {view}: {e}")
+            print(traceback.format_exc())
+
+
+
+# -----------------------------------------------------------------------------
+# Functions for dealing with crop and Zoom datasets 
+# -----------------------------------------------------------------------------
+
+def _get_bbox_path_fn(p: Path, results_dir: Path, data_dir: Path) -> Path:
+    """Given some preds file `p` and `results_dir`, it will return p's
+    corresponding bbox path in the data directory."""
+    # Gets the current depth in the model directory.
+    n_levels_up = len(p.parent.parts) - len(results_dir.parts)
+    # Hack: correct the logic for when transforming results of eks_multiview back to cropped space.
+    if "eks_multiview" in p.parts:
+        n_levels_up -= 1
+    # Get `p` relative to model_dir
+    model_dir = p.parents[n_levels_up]
+    relative_p = Path(p).relative_to(model_dir)
+    p_in_data_dir = data_dir / relative_p
+    bbox_path = p_in_data_dir.with_stem(p.stem + "_bbox")
+    return bbox_path
+
+
+def generate_cropped_csv_file(
+    input_csv_file: str | Path,
+    input_bbox_file: str | Path,
+    output_csv_file: str | Path,
+    img_height: int | None = None,
+    img_width: int | None = None,
+    mode: str = "subtract",
+):
+    """Translate a CSV file by bbox file.
+    Requires the files have the same index.
+
+    Defaults to subtraction. Can use mode='add' to map from cropped to original space.
+    """
+    if mode not in ("add", "subtract"):
+        raise ValueError(f"{mode} is not a valid mode")
+    # Load csv and bbox data   
+    csv_data = pd.read_csv(input_csv_file, header=[0, 1, 2], index_col=0)
+    csv_data = io_utils.fix_empty_first_row(csv_data)
+    bbox_data = pd.read_csv(input_bbox_file, index_col=0)
+
+    # Inside the loop for columns
+    for col in csv_data.columns:
+        if col[-1] in ("x", "y"):
+            vals = csv_data[col].copy()  # Create a copy to avoid chained operations
+            coord_type = col[-1]  # 'x' or 'y'
+            
+            if mode == "subtract":
+                # First apply the subtraction
+                vals = vals - bbox_data[coord_type]
+                # Then apply scaling if dimensions are provided
+                if coord_type == "x" and img_width:
+                    vals = (vals / bbox_data["w"]) * img_width
+                elif coord_type == "y" and img_height:
+                    vals = (vals / bbox_data["h"]) * img_height
+            else:  # mode == "add"
+                # First apply scaling if dimensions are provided
+                if coord_type == "x" and img_width:
+                    vals = (vals / img_width) * bbox_data["w"]
+                elif coord_type == "y" and img_height:
+                    vals = (vals / img_height) * bbox_data["h"]
+                # Then add the offset
+                vals = vals + bbox_data[coord_type]
+            
+            csv_data[col] = vals
+
+    output_csv_file = Path(output_csv_file)
+    output_csv_file.parent.mkdir(parents=True, exist_ok=True)
+    csv_data.to_csv(output_csv_file)
+
+def prepare_uncropped_csv_files(csv_files: list[str], get_bbox_path_fn: Callable[[Path, ], Path]):
+    # Check if a bbox file exists
+    # has_checked_bbox_file caches the file check
+    has_checked_bbox_file = False
+    csv_files_uncropped = []
+    for p in csv_files:
+        p = Path(p)
+        # p is the absolute path to the prediction file.
+        # The bbox path has the same relative directory structure but rooted in the data directory
+        # and suffixed by _bbox.csv.
+        bbox_path = get_bbox_path_fn(p)
+        
+        if not has_checked_bbox_file:
+            if not bbox_path.is_file():
+                return None
+            has_checked_bbox_file = True
+
+        # If there's a bbox_file, remap to original space by adding bbox df to preds df.
+        # Save as _uncropped.csv version of preds_file.
+        remapped_p = p.with_stem(p.stem + "_uncropped")
+        print(f"remapped_p is {remapped_p}")
+        csv_files_uncropped.append(str(remapped_p))
+        generate_cropped_csv_file(p, bbox_path, remapped_p, img_height = 320, img_width = 320, mode="add")
+
+    return csv_files_uncropped
+
+
+def _ordered_xy_pairs_for_keypoints(
+    df: pd.DataFrame, keypoint_names: list[str]
+) -> list[tuple[Any, Any]]:
+    """Return (x_col, y_col) multi-index tuples per keypoint, in keypoint order."""
+    pairs: list[tuple[Any, Any]] = []
+    for bp in keypoint_names:
+        x_cols = [c for c in df.columns if isinstance(c, tuple) and len(c) >= 3 and c[1] == bp and c[2] == "x"]
+        y_cols = [c for c in df.columns if isinstance(c, tuple) and len(c) >= 3 and c[1] == bp and c[2] == "y"]
+        if len(x_cols) != 1 or len(y_cols) != 1:
+            raise ValueError(f"Expected one x and one y column for bodypart {bp!r}, got x={x_cols!r} y={y_cols!r}")
+        pairs.append((x_cols[0], y_cols[0]))
+    return pairs
+
+
+def _keypoint_names_in_column_order(labels_df: pd.DataFrame) -> list[str]:
+    """Bodypart names in first-seen order for x columns (skips set and non-xy)."""
+    seen: list[str] = []
+    for c in labels_df.columns:
+        if not isinstance(c, tuple) or len(c) < 3:
+            continue
+        if c[0] == "set":
+            continue
+        if c[2] != "x":
+            continue
+        bp = c[1]
+        if bp not in seen:
+            seen.append(bp)
+    return seen
+
+
+def _set_column_key(df: pd.DataFrame) -> tuple[Any, ...] | None:
+    """MultiIndex column label for train/val ``set``, if present."""
+    exact = ("set", "", "")
+    if exact in df.columns:
+        return exact
+    for c in df.columns:
+        if isinstance(c, tuple) and len(c) >= 1 and c[0] == "set":
+            return c
+    return None
+
+
+def write_labeled_pixel_error_csv(
+    preds_file: str | Path,
+    labels_file: str | Path,
+    output_file: str | Path | None = None,
+    set_column_from_file: str | Path | None = None,
+) -> Path:
+    """Per-keypoint Euclidean pixel error vs labels; saves next to preds (Lightning Pose convention).
+
+    Use this when predictions are x,y-only (no likelihood) or lack a ``set`` column, so
+    ``compute_metrics_single`` would not run the pixel_error branch.
+
+    Output path: ``{preds_stem}_pixel_error.csv`` (e.g. ``predictions_camera1_new_pixel_error.csv``).
+
+    Args:
+        preds_file: Model predictions CSV (multi-index header, same row index as labels).
+        labels_file: Ground-truth ``CollectedData_*`` CSV.
+        output_file: Optional explicit output path.
+        set_column_from_file: Optional CSV with the same index; if it has a ``set`` column
+            (multi-index ``("set","","")`` or scorer level ``set``), that column is copied
+            into the error table (e.g. train/validation split).
+    """
+    preds_path = Path(preds_file)
+    pred_df = pd.read_csv(preds_path, header=[0, 1, 2], index_col=0)
+    pred_df = io_utils.fix_empty_first_row(pred_df)
+    labels_df = pd.read_csv(labels_file, header=[0, 1, 2], index_col=0)
+    labels_df = io_utils.fix_empty_first_row(labels_df)
+
+    if not pred_df.index.equals(labels_df.index):
+        raise ValueError(
+            f"Prediction index does not match labels: {preds_path} vs {labels_file}"
+        )
+
+    keypoint_names = _keypoint_names_in_column_order(labels_df)
+    if not keypoint_names:
+        raise ValueError(f"No x/y keypoint columns found in {labels_file}")
+
+    pairs_l = _ordered_xy_pairs_for_keypoints(labels_df, keypoint_names)
+    pairs_p = _ordered_xy_pairs_for_keypoints(pred_df, keypoint_names)
+
+    n = len(labels_df)
+    k = len(keypoint_names)
+    true_kp = np.empty((n, k, 2), dtype=np.float64)
+    pred_kp = np.empty((n, k, 2), dtype=np.float64)
+    for i, ((xl, yl), (xp, yp)) in enumerate(zip(pairs_l, pairs_p)):
+        true_kp[:, i, 0] = labels_df[xl].to_numpy()
+        true_kp[:, i, 1] = labels_df[yl].to_numpy()
+        pred_kp[:, i, 0] = pred_df[xp].to_numpy()
+        pred_kp[:, i, 1] = pred_df[yp].to_numpy()
+
+    err = pixel_error(true_kp, pred_kp)
+    error_df = pd.DataFrame(err, index=labels_df.index, columns=keypoint_names)
+
+    if set_column_from_file is not None:
+        ref = pd.read_csv(set_column_from_file, header=[0, 1, 2], index_col=0)
+        ref = io_utils.fix_empty_first_row(ref)
+        set_key = _set_column_key(ref)
+        if set_key is not None:
+            error_df["set"] = ref.loc[error_df.index, set_key]
+    else:
+        set_key = _set_column_key(pred_df)
+        if set_key is not None:
+            error_df["set"] = pred_df.loc[:, set_key]
+
+    out = Path(output_file) if output_file is not None else preds_path.with_name(preds_path.stem + "_pixel_error.csv")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    error_df.to_csv(out)
+    return out
+
+
+def extract_session_info(filename: str, view_names: list[str]) -> tuple[str, str]:
+    """Extract session name and view from filename.
+
+    Matches views as underscore-delimited segments (e.g. '_TL_' or '_TL' at end)
+    and checks longer names first so 'TL' is never shadowed by 'L'.
+    """
+    name = filename.replace('.csv', '')
+    # Sort longest-first so 'TL'/'TR'/'TC'/'BC' are checked before 'L'/'R'/'C'
+    sorted_views = sorted(view_names, key=len, reverse=True)
+    view_name = next(
+        (v for v in sorted_views if f'_{v}_' in name or name.endswith(f'_{v}')),
+        name.split('_')[-1]
+    )
+    session_name = name.replace(f'_{view_name}', '', 1)
+    return session_name, view_name
+
+
+def parse_labeled_frames(image_paths: list[str], view_names: list[str]) -> dict[str, set[int]]:
+    """Parse session names and frame numbers from image paths."""
+    import re
+    labeled_frames = {}
+    
+    for img_path in image_paths:
+        try:
+            parts = img_path.split('/')
+            if len(parts) < 2:
+                continue
+                
+            session_dir, img_filename = parts[-2], parts[-1]
+            
+            # Extract frame number
+            frame_match = re.search(r'img(\d+)\.png', img_filename)
+            if not frame_match:
+                continue
+                
+            frame_number = int(frame_match.group(1))
+            session_name = session_dir
+            for view in view_names:
+                session_name = session_name.replace(f'_{view}', '')
+            
+            labeled_frames.setdefault(session_name, set()).add(frame_number)
+        except Exception as e:
+            print(f"Could not parse {img_path}: {e}")
+            
+    return labeled_frames
+
+
+def extract_sequence_name(session_name: str, view_names: list[str]) -> str:
+    """Extract base sequence name by removing view identifiers and suffixes.
+    
+    Handles multiple dataset naming patterns:
+    - IBL: _iblrig_leftCamera.downsampled.UUID -> _iblrig.downsampled.UUID
+    - Standard: session_viewName -> session
+    - Fly-anipose: date_fly_R#C#_Cam-A_rot-* -> date_fly_R#C#_rot-*
+    - Chickadee: BIRD_DATE_TIME_camera -> BIRD_DATE_TIME
+    - Mirror-mouse: date_session_view -> date_session
+    """
+    result = session_name
+    
+    # Remove .short suffix first
+    result = result.replace('.short', '')
+    
+    # Handle IBL-style: _iblrig_viewName.downsampled.UUID
+    for view in view_names:
+        ibl_pattern = f"_{view}.downsampled"
+        if ibl_pattern in result:
+            result = result.replace(ibl_pattern, ".downsampled")
+            return result
+    
+    # Handle standard patterns: split by underscore and remove view names
+    parts = result.split('_')
+    sequence_parts = [p for p in parts if p not in view_names]
+    result = '_'.join(sequence_parts)
+    
+    return result
+
+
+def parse_session_name(session_name: str, view_names: list[str]) -> tuple[str, str]:
+    """Parse session name into base session and condition."""
+    # First extract the sequence name by removing view identifiers
+    sequence_name = extract_sequence_name(session_name, view_names)
+    
+    # Now check for conditions in the sequence name
+    parts = sequence_name.split('_')
+    condition_start = next((i for i, part in enumerate(parts) 
+                          if any(pattern in part for pattern in ['str-', 'rot-', 'sec'])), 
+                         len(parts))
+    
+    if condition_start < len(parts):
+        return '_'.join(parts[:condition_start]), '_'.join(parts[condition_start:])
+    return sequence_name, ""
+
+
+def remap_keypoints_to_original_space(keypoints_2d: np.ndarray, bbox_data: dict,
+                                     img_height: int = 320, img_width: int = 320) -> np.ndarray:
+    """Remap keypoints from cropped space back to original space."""
+    if bbox_data is None:
+        print("No bbox data provided for remapping")
+        return keypoints_2d
+    
+    # Validate required bbox keys
+    required_keys = ['x', 'y', 'w', 'h']
+    missing_keys = [key for key in required_keys if key not in bbox_data or bbox_data[key] is None]
+    
+    if missing_keys:
+        print(f"Missing bbox keys {missing_keys}. Cannot remap keypoints.")
+        return keypoints_2d
+    
+    # Check for valid bbox dimensions
+    if bbox_data['w'] <= 0 or bbox_data['h'] <= 0:
+        print(f"Invalid bbox dimensions: w={bbox_data['w']}, h={bbox_data['h']}")
+        return keypoints_2d
+    
+    # Check for NaN/inf values
+    bbox_values = [bbox_data[key] for key in required_keys]
+    if any(np.isnan(val) or np.isinf(val) for val in bbox_values):
+        print("Bbox contains NaN or inf values. Cannot remap keypoints.")
+        return keypoints_2d
+    
+    # This is the inverse of the cropping operation
+    # From cropped space (img_width x img_height) back to original space
+    remapped_keypoints = keypoints_2d.copy()
+    
+    # Scale back to original dimensions
+    remapped_keypoints[:, 0] = (remapped_keypoints[:, 0] / img_width) * bbox_data['w']
+    remapped_keypoints[:, 1] = (remapped_keypoints[:, 1] / img_height) * bbox_data['h']
+    
+    # Add back the bbox offset
+    remapped_keypoints[:, 0] += bbox_data['x']
+    remapped_keypoints[:, 1] += bbox_data['y']
+    
+    return remapped_keypoints
+
+
+def create_image_path(
+    session_name: str, 
+    view_name: str, 
+    frame_number: int, 
+    view_names: list[str],
+    labeled_data_prefix: str = 'labeled_data',
+    image_ext: str = '.png'
+) -> str:
+    """Create image path for a frame.
+    
+    Handles different naming conventions:
+    - IBL style: _iblrig.downsampled.UUID -> _iblrig_viewName.downsampled.UUID
+    - Fly-anipose: base_rot-condition -> base_viewName_rot-condition
+    - Standard style: session_name -> session_name_viewName
+    
+    Args:
+        session_name: Base session name (without view)
+        view_name: Camera/view name to insert
+        frame_number: Frame number for the image filename
+        view_names: List of all view names (for reference)
+        labeled_data_prefix: Directory prefix ('labeled_data' or 'labeled-data')
+        image_ext: Image extension ('.png', '.jpg', etc.)
+    """
+    clean_session_name = session_name.replace('.short', '')
+    
+    # Handle IBL-style naming: _iblrig.downsampled.UUID
+    # The view name should be inserted before .downsampled
+    if '.downsampled.' in clean_session_name:
+        prefix, suffix = clean_session_name.split('.downsampled.', 1)
+        dir_name = f"{prefix}_{view_name}.downsampled.{suffix}"
+        return f"{labeled_data_prefix}/{dir_name}/img{frame_number:08d}{image_ext}"
+    
+    # Handle condition-based naming (str-, rot-, sec patterns) - check BEFORE dot handling
+    # This handles fly-anipose style: 05272019_fly1_0_R1C24_rot-ccw-0.06_sec
+    parts = clean_session_name.split('_')
+    condition_start = next((i for i, p in enumerate(parts) 
+                          if any(x in p for x in ['str-', 'rot-', 'sec'])), len(parts))
+    
+    if condition_start < len(parts):
+        base_session = '_'.join(parts[:condition_start])
+        condition = '_'.join(parts[condition_start:])
+        return f"{labeled_data_prefix}/{base_session}_{view_name}_{condition}/img{frame_number:08d}{image_ext}"
+    
+    # Standard: append view at end
+    return f"{labeled_data_prefix}/{clean_session_name}_{view_name}/img{frame_number:08d}{image_ext}"
+
+
+def find_prediction_files(base_dir: str, view: str) -> List[str]:
+    """
+    Find all prediction files for a given view in a directory.
+    
+    Parameters:
+    -----------
+    base_dir : str
+        Base directory to search in
+    view : str
+        View name to match
+        
+    Returns:
+    --------
+    List[str]
+        List of matching file paths
+    """
+    if not os.path.exists(base_dir):
+        return []
+    
+    matching_files = []
+    
+    # Look for files that contain the view name
+    for file in os.listdir(base_dir):
+        if file.endswith('.csv') and view in file:
+            matching_files.append(os.path.join(base_dir, file))
+    
+    return sorted(matching_files)  # Sort for consistent ordering
+
+def extract_session_info(filename: str, views: List[str]) -> Tuple[str, str]:
+    """
+    Extract session name and view from filename.
+
+    Matches views as underscore-delimited segments (e.g. '_TL_' or '_TL' at end)
+    and checks longer names first so 'TL' is never shadowed by 'L'.
+    """
+    name = filename.replace('.csv', '')
+    # Sort longest-first so 'TL'/'TR'/'TC'/'BC' are checked before 'L'/'R'/'C'
+    sorted_views = sorted(views, key=len, reverse=True)
+    view_name = next(
+        (v for v in sorted_views if f'_{v}_' in name or name.endswith(f'_{v}')),
+        name.split('_')[-1]
+    )
+    session_name = name.replace(f'_{view_name}', '', 1)
+    return session_name, view_name
+
+
+
+def generate_comprehensive_paths_multi_results(
+    dataset_name: str,
+    views: List[str],
+    results_configs: Union[List[str], Dict[str, Dict]],  # Now accepts configs per results dir
+    video_dirs: Union[str, List[str]],  # Now accepts single string or list of strings
+    seed_dirs: List[str],
+    ensemble_seed: str = None,
+    ensemble_methods: List[str] = None,
+    n_hand_labels: str = "200",
+    include_seeds: bool = True,
+    include_ensembles: bool = True,
+    base_path: str = "/teamspace/studios",
+    data_dir: str = "data",
+    studio_dir: str = "this_studio",
+    output_dir: str = "outputs",
+):
+    """
+    Generate comprehensive paths for multiple results directories with different model types.
+    
+    Parameters:
+    -----------
+    results_configs : Union[List[str], Dict[str, Dict]]
+        Either a list of results directory names (uses default model_type),
+        or a dict mapping results_dir -> {'model_type': str, 'n_hand_labels': str}
+    video_dirs : Union[str, List[str]]
+        Single video directory name or list of video directory names to search in
+    """
+    
+    # Convert video_dirs to list if it's a single string
+    if isinstance(video_dirs, str):
+        video_dirs = [video_dirs]
+    
+    # Convert simple list to config dict if needed
+    if isinstance(results_configs, list):
+        # Default model_type - you'll need to specify the correct one
+        default_model_type = "mvt_3d_loss"  
+        results_configs = {
+            results_dir: {'model_type': default_model_type, 'n_hand_labels': n_hand_labels}
+            for results_dir in results_configs
+        }
+    
+    # Ground truth paths (unchanged)
+    In_Dist_paths = {
+        view: os.path.join(base_path, data_dir, dataset_name, f'remapped_CollectedData_{view}.csv')
+        for view in views
+    }
+    
+    if not Path(In_Dist_paths[views[0]]).is_file():
+        In_Dist_paths = {
+            view: os.path.join(base_path, data_dir, dataset_name, f'CollectedData_{view}.csv')
+            for view in views
+        }
+    
+    Out_Dist_paths = {
+        view: os.path.join(base_path, data_dir, dataset_name, f'remapped_CollectedData_{view}_new.csv')
+        for view in views
+    }
+    
+    if not Path(Out_Dist_paths[views[0]]).is_file():
+        Out_Dist_paths = {
+            view: os.path.join(base_path, data_dir, dataset_name, f'CollectedData_{view}_new.csv')
+            for view in views
+        }
+    
+    # Initialize combined file paths structure
+    all_file_paths_combined = {}
+    
+    # Process each results directory with its specific config
+    for results_dir, config in results_configs.items():
+        model_type = config['model_type']
+        n_labels = config['n_hand_labels']
+        
+        print(f"\n=== Processing results directory: {results_dir} ===")
+        print(f"    Model type: {model_type}, Labels: {n_labels}")
+        
+        # Collect all prediction directories for this results_dir
+        all_prediction_dirs = []
+        
+        # Individual seed predictions (if requested)
+        if include_seeds and seed_dirs:
+            for seed in seed_dirs:
+                for video_dir in video_dirs:
+                    pred_dir = os.path.join(
+                        base_path, studio_dir, output_dir, dataset_name, results_dir,
+                        f"{model_type}_{n_labels}_{seed}", video_dir
+                    )
+                    print(f"  Checking seed dir: {pred_dir}")
+                    if os.path.exists(pred_dir):
+                        model_name = f"{results_dir}_seed_{seed}"
+                        all_prediction_dirs.append((model_name, pred_dir))
+                        print(f"    EXISTS: Added {model_name}")
+                    else:
+                        print(f"    NOT FOUND: {pred_dir}")
+        
+        # Ensemble predictions (if requested)
+        if include_ensembles and ensemble_methods and ensemble_seed:
+            for method in ensemble_methods:
+                for video_dir in video_dirs:
+                    pred_dir = os.path.join(
+                        base_path, studio_dir, output_dir, dataset_name, results_dir,
+                        f"{model_type}_{n_labels}_{ensemble_seed}", method, video_dir
+                    )
+                    print(f"  Checking ensemble dir: {pred_dir}")
+                    if os.path.exists(pred_dir):
+                        # Add _anipose suffix if video_dir contains _reprojected
+                        if "_reprojected" in video_dir:
+                            model_name = f"{results_dir}_{method}_anipose"
+                        else:
+                            model_name = f"{results_dir}_{method}"
+                        all_prediction_dirs.append((model_name, pred_dir))
+                        print(f"    EXISTS: Added {model_name}")
+                    else:
+                        print(f"    NOT FOUND: {pred_dir}")
+        
+        print(f"  Total directories found for {results_dir}: {len(all_prediction_dirs)}")
+        
+        if len(all_prediction_dirs) == 0:
+            print(f"  WARNING: No directories found for {results_dir}!")
+            continue
+        
+        # Process files from each prediction directory
+        for model_name, pred_dir in all_prediction_dirs:
+            print(f"  Processing {model_name}: {pred_dir}")
+            
+            # Find all CSV files
+            all_csvs = []
+            if os.path.exists(pred_dir):
+                all_csvs = [f for f in os.listdir(pred_dir) if f.endswith('.csv')]
+            
+            print(f"    Found {len(all_csvs)} CSV files")
+            
+            # Group files by session
+            for csv_file in all_csvs:
+                # Skip uncropped files
+                if '_uncropped' in csv_file:
+                    continue
+                    
+                full_path = os.path.join(pred_dir, csv_file)
+                
+                # Extract session name and view
+                session_name, view_name = extract_session_info(csv_file, views)
+                
+                # Verify this view is expected
+                if view_name not in views:
+                    continue
+                
+                if session_name and view_name:
+                    # Initialize nested dictionaries
+                    if session_name not in all_file_paths_combined:
+                        all_file_paths_combined[session_name] = {view: {} for view in views}
+                    
+                    # Store the file path
+                    all_file_paths_combined[session_name][view_name][model_name] = full_path
+                    print(f"      Added {session_name} -> {view_name} -> {model_name}")
+    
+    print(f"Total sessions found: {len(all_file_paths_combined)}")
+    
+    # Filter sessions with sufficient views
+    filtered_sessions = {}
+    for session_name, session_data in all_file_paths_combined.items():
+        valid_views = [v for v in views if session_data[v]]
+        if len(valid_views) >= 2:
+            filtered_sessions[session_name] = session_data
+            print(f"Keeping session '{session_name}' with {len(valid_views)} views")
+    
+    print(f"Final result: {len(filtered_sessions)} sessions with sufficient data")
+    
+    return In_Dist_paths, Out_Dist_paths, filtered_sessions

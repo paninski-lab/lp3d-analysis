@@ -1,12 +1,31 @@
 import argparse
 import os
+import copy
+
+# Configure JAX memory settings BEFORE any imports to prevent segmentation faults
+# These must be set before JAX is imported anywhere
+os.environ.setdefault('XLA_PYTHON_CLIENT_PREALLOCATE', 'false')
+os.environ.setdefault('XLA_PYTHON_CLIENT_MEM_FRACTION', '0.8')
+os.environ.setdefault('XLA_PYTHON_CLIENT_ALLOCATOR', 'default')
+# Set JAX_DISABLE_JIT=true to disable JIT (slower but prevents segfaults if needed)
+os.environ.setdefault('JAX_DISABLE_JIT', 'false')
+
+from omegaconf import OmegaConf
 
 from lp3d_analysis.io import load_cfgs
 from lp3d_analysis.train import train_and_infer
-from lp3d_analysis.utils import extract_ood_frame_predictions
-from lp3d_analysis.post_process import post_process_ensemble_labels, post_process_ensemble_videos
-
-
+from lp3d_analysis.utils import extract_ood_frame_predictions, rename_pixel_error_files
+# from lp3d_analysis.post_process import  post_process_ensemble_videos , post_process_ensemble_labels #post_process_ensemble_labels,
+from lp3d_analysis.post_process import post_process_ensemble_labels #post_process_ensemble_labels,
+# post_process_full_videos imports JAX/EKS — imported lazily so JAX doesn't
+# initialize and claim GPU memory before Lightning Pose training/inference runs.
+# from lp3d_analysis.post_process_full_videos import post_process_ensemble_videos, extract_labeled_frame_predictions
+# from lp3d_analysis.post_process_concat import  post_process_ensemble_videos, post_process_ensemble_labels_concat
+# from lp3d_analysis.post_process_concat_bbox import  post_process_ensemble_videos, post_process_ensemble_labels_concat
+# from lp3d_analysis.post_process_concat_bbox_short_version_shorter import  post_process_ensemble_videos, post_process_ensemble_labels_concat
+# from lp3d_analysis.post_process_no_concat import  post_process_ensemble_videos, post_process_ensemble_labels
+# from lp3d_analysis.post_process_concat_bbox_aug26 import post_process_ensemble_labels_concat #post_process_ensemble_labels,
+# from lp3d_analysis.post_process_full_videos import extract_labeled_frame_predictions #post_process_ensemble_labels,
 
 # TODO
 # - before train_and_infer, will be nice to put cfg updates in their own function
@@ -17,10 +36,37 @@ from lp3d_analysis.post_process import post_process_ensemble_labels, post_proces
 VALID_MODEL_TYPES = [
     'supervised',
     'context',
+    'multiview_transformer_learnable_crossview',
+    'multiview_transformer',
+    'multiview_transformer_mhcrnn',  # New multiview transformer MHCRNN model type
+    'mvt_context',  # Multiview transformer with context (MHCRNN) - optimized version
+    'mvt_3d_loss',
+    'mvt_heatmap_3d_loss',
+    'mvt_unsupervised_losses',
+    'mvt_semisupervised',  # New model type for semi-supervised training with unsupervised losses
+    'mvt_transformer_mhcrnn_semisupervised',  # New model type for semi-supervised multiview transformer MHCRNN
+
 ]
 
 
-def pipeline(config_file: str):
+def _model_losses_to_use_from_cfg(cfg_lp, default_if_empty: list | None = None) -> list:
+    """Resolve ``model.losses_to_use`` when applying pipeline overrides.
+
+    If the base Lightning Pose config lists unsupervised losses, that list is used
+    (semi-supervised: ``UnlabeledDataModule`` + ``SemiSupervisedHeatmapTracker*``).
+    If the list is empty or missing, ``default_if_empty`` is used — e.g. ``[]`` for
+    supervised-only, or ``[\"pca_multiview\"]`` for pipeline types that default to PCA.
+    """
+    raw = cfg_lp.model.get("losses_to_use", None)
+    if raw is None:
+        return list(default_if_empty) if default_if_empty is not None else []
+    raw_list = [x for x in list(raw) if x is not None and str(x).strip() != ""]
+    if len(raw_list) == 0:
+        return list(default_if_empty) if default_if_empty is not None else []
+    return raw_list
+
+
+def pipeline(config_file: str, for_seed: int | None = None) -> None:
 
     # -------------------------------------------
     # Setup
@@ -43,6 +89,8 @@ def pipeline(config_file: str):
         for model_type in cfg_pipe.train_networks.model_types:
             for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
                 for rng_seed in cfg_pipe.train_networks.ensemble_seeds:
+                    if for_seed is not None and for_seed != rng_seed:
+                        continue
                     print(
                         f'fitting {model_type} model (rng_seed={rng_seed}) with {n_hand_labels}' 
                         f'hand labels'
@@ -52,48 +100,40 @@ def pipeline(config_file: str):
                         outputs_dir, cfg_pipe.intermediate_results_dir, 
                         f'{model_type}_{n_hand_labels}_{rng_seed}',
                     )
-                    # update cfg_lp
-                    cfg_lp_copy = cfg_lp.copy()
-                    cfg_lp_copy.training.rng_seed_data_pt = rng_seed
-                    cfg_lp_copy.training.rng_seed_model_pt = rng_seed
-                    cfg_lp_copy.training.train_frames = n_hand_labels
-                    if model_type == 'supervised':
-                        cfg_lp_copy.model.model_type = 'heatmap'
-                        cfg_lp_copy.model.losses_to_use = []
-                    elif model_type == 'context':
-                        cfg_lp_copy.model.model_type = 'heatmap_mhcrnn'
-                        cfg_lp_copy.model.losses_to_use = []
-                    else:
-                        raise ValueError(
-                            f'{model_type} is not a valid model type in pipeline cfg; must choose'
-                            f'from {VALID_MODEL_TYPES} or add a new model type'
-                        )
-                    # Main function call 
+                    cfg_lp_copy = make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_seed)
+                    # Main function call
                     train_and_infer(
-                        cfg_pipe=cfg_pipe.copy(),
                         cfg_lp=cfg_lp_copy,
-                        data_dir=data_dir,
-                        results_dir=results_dir,
+                        model_dir=results_dir,
                         inference_dirs=cfg_pipe.train_networks.inference_dirs,
                         overwrite=cfg_pipe.train_networks.overwrite,
                     )
+                    print(f"Debug: Rename pixel error files for {results_dir}")
+                    # Rename pixel error files for this specific model
+                    rename_pixel_error_files(results_dir)
 
                     if 'videos-for-each-labeled-frame' in cfg_pipe.train_networks.inference_dirs:
                         # Clean up/reorganize OOD data
                         extract_ood_frame_predictions(
-                            cfg_lp=cfg_lp_copy.copy(), # the reason is that if I don't do that on rng 0  I will run train and infer on the in distribution data and then I come to this function if I don't do that in that function, I will train on incorrect data because it will change configrations file 
+                            cfg_lp=cfg_lp_copy,
                             data_dir=data_dir,
                             results_dir=results_dir,
                             overwrite=cfg_pipe.train_networks.overwrite,
+                            # overwrite=True,
                             video_dir='videos-for-each-labeled-frame',
                         )
-                
-    
+
+    # The rest of the pipeline only runs when you run without --for_seed.
+    if for_seed is not None:
+        return
+
     for mode, mode_config in cfg_pipe.post_processing_videos.items():
         for model_type in cfg_pipe.train_networks.model_types:
             for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
-                if mode_config.run: # if the mode is mean or median or eks_singleview 
-                    #print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}"
+                if mode_config.run: # if the mode is mean or median or eks_singleview
+                    from lp3d_analysis.post_process_full_videos import post_process_ensemble_videos
+                    print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}")
+                    # cfg_lp_copy = make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_seed)
                     post_process_ensemble_videos(
                         cfg_lp=cfg_lp_copy.copy(),
                         results_dir=results_dir,
@@ -104,14 +144,52 @@ def pipeline(config_file: str):
                         mode=mode,
                         inference_dirs=cfg_pipe.train_networks.inference_dirs,
                         overwrite=mode_config.overwrite,
+                        **({"n_latent": mode_config.n_latent} if hasattr(mode_config, 'n_latent') else {}),
+                        **({"non_linear": mode_config.non_linear} if hasattr(mode_config, 'non_linear') else {"non_linear": False}),
+                        **({"output_folder_name": mode_config.output_folder_name} if hasattr(mode_config, 'output_folder_name') and mode_config.output_folder_name else {})
                     )
+    
+    # Second part - make labeled frames extraction completely independent
+    if hasattr(cfg_pipe, "post_processing_labeled_frames") and cfg_pipe.post_processing_labeled_frames.run:
+        print("\n----- Processing labeled frames for ensemble methods -----")
+        for model_type in cfg_pipe.train_networks.model_types:
+            for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
+                for mode in cfg_pipe.post_processing_labeled_frames.modes:
+                    print(f"\nExtracting labeled frame predictions for {model_type} {n_hand_labels} using {mode}")
+                    # specify output directory for the ensemble
+                    results_dir = os.path.join(
+                        outputs_dir, cfg_pipe.intermediate_results_dir, 
+                        f'{model_type}_{n_hand_labels}_{cfg_pipe.train_networks.ensemble_seeds[0]}',
+                    )
+                    cfg_lp_copy = make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, cfg_pipe.train_networks.ensemble_seeds[0])
+                    
+                    # Run labeled frames extraction for each inference directory
+                    for inference_dir in cfg_pipe.train_networks.inference_dirs:
+                        # I want to run only if there are files in the directory and it is not empty
+                        print(f"Checking if inference directory {inference_dir} exists and is not empty")
+                        if os.path.exists(os.path.join(results_dir, inference_dir)) and os.listdir(os.path.join(results_dir, inference_dir)):
+                            from lp3d_analysis.post_process_full_videos import extract_labeled_frame_predictions
+                            extract_labeled_frame_predictions(
+                                cfg_lp=cfg_lp_copy,
+                                results_dir=results_dir,
+                                model_type=model_type,
+                                n_labels=n_hand_labels,
+                                seed_range=(cfg_pipe.train_networks.ensemble_seeds[0], cfg_pipe.train_networks.ensemble_seeds[-1]),
+                                views=list(cfg_lp.data.view_names),
+                                mode=mode,
+                                inference_dir=inference_dir,
+                                overwrite=cfg_pipe.post_processing_labeled_frames.overwrite
+                            )
+                        else:
+                            print(f"Skipping {inference_dir} as it does not exist or is empty so we cannot extract labeled frames")
 
     for mode, mode_config in cfg_pipe.post_processing_labels.items():
         for model_type in cfg_pipe.train_networks.model_types:
             for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
                 if mode_config.run: # if the mode is mean or median or eks_singleview 
                     #print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}"
-                    post_process_ensemble_labels(
+                    # cfg_lp_copy = make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, 0)
+                    post_process_ensemble_labels( # remember I changed that for a second 
                         cfg_lp=cfg_lp_copy.copy(),
                         results_dir=results_dir,
                         model_type=model_type,
@@ -121,9 +199,64 @@ def pipeline(config_file: str):
                         mode=mode,
                         inference_dirs=cfg_pipe.train_networks.inference_dirs,
                         overwrite=mode_config.overwrite,
+                        **({"n_latent": mode_config.n_latent} if hasattr(mode_config, 'n_latent') else {}),
+                        **({"non_linear": mode_config.non_linear} if hasattr(mode_config, 'non_linear') else {"non_linear": False}),
+                        **({"output_folder_name": mode_config.output_folder_name} if hasattr(mode_config, 'output_folder_name') and mode_config.output_folder_name else {})
                     )
 
+    # # Add processing of labeled frames after post-processing videos
+    # if hasattr(cfg_pipe, "post_processing_labeled_frames") and cfg_pipe.post_processing_labeled_frames.run:
+    #     print("\n----- Processing labeled frames for ensemble methods -----")
+    #     for model_type in cfg_pipe.train_networks.model_types:
+    #         for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
+    #             for mode in cfg_pipe.post_processing_labeled_frames.modes:
+    #                 if mode not in cfg_pipe.post_processing_videos or not cfg_pipe.post_processing_videos[mode].run:
+    #                     print(f"Skipping {mode} for labeled frames as it was not run in post_processing_videos")
+    #                     continue
+                        
+    #                 print(f"\nExtracting labeled frame predictions for {model_type} {n_hand_labels} using {mode}")
+    #                 # specify output directory for the ensemble
+    #                 results_dir = os.path.join(
+    #                     outputs_dir, cfg_pipe.intermediate_results_dir, 
+    #                     f'{model_type}_{n_hand_labels}_{cfg_pipe.train_networks.ensemble_seeds[0]}',
+    #                 )
+    #                 cfg_lp_copy = make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, cfg_pipe.train_networks.ensemble_seeds[0])
+                    
+    #                 # Run labeled frames extraction for each inference directory
+    #                 for inference_dir in cfg_pipe.train_networks.inference_dirs:
+    #                     extract_labeled_frame_predictions(
+    #                         cfg_lp=cfg_lp_copy,
+    #                         results_dir=results_dir,
+    #                         model_type=model_type,
+    #                         n_labels=n_hand_labels,
+    #                         seed_range=(cfg_pipe.train_networks.ensemble_seeds[0], cfg_pipe.train_networks.ensemble_seeds[-1]),
+    #                         views=list(cfg_lp.data.view_names),
+    #                         mode=mode,
+    #                         inference_dir=inference_dir,
+    #                         overwrite=cfg_pipe.post_processing_labeled_frames.overwrite
+    #                     )
 
+
+
+
+
+    # for mode, mode_config in cfg_pipe.post_processing_labels.items():
+    #     for model_type in cfg_pipe.train_networks.model_types:
+    #         for n_hand_labels in cfg_pipe.train_networks.n_hand_labels:
+    #             if mode_config.run: # if the mode is mean or median or eks_singleview 
+    #                 #print(f"Debug: Preparing to run {mode} for {model_type} with seed range {cfg_pipe.train_networks.ensemble_seeds}"
+    #                 # cfg_lp_copy = make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, 0)
+    #                 post_process_ensemble_labels( # remember I changed that for a second 
+    #                     cfg_lp=cfg_lp_copy.copy(),
+    #                     results_dir=results_dir,
+    #                     model_type=model_type,
+    #                     n_labels= n_hand_labels,
+    #                     seed_range=(cfg_pipe.train_networks.ensemble_seeds[0], cfg_pipe.train_networks.ensemble_seeds[-1]),
+    #                     views= list(cfg_lp.data.view_names), # before it was not a list... 
+    #                     mode=mode,
+    #                     inference_dirs=cfg_pipe.train_networks.inference_dirs,
+    #                     overwrite=mode_config.overwrite,
+    #                 )
 
                 # for mode, mode_config in cfg_pipe.post_processing.items():
                 #     if mode_config.run: # if the mode is mean or median or eks_singleview 
@@ -139,9 +272,200 @@ def pipeline(config_file: str):
                 #             inference_dirs=cfg_pipe.train_networks.inference_dirs,
                 #             overwrite=mode_config.overwrite,
                 #         )
-                    
+       
 
+def make_model_cfg(cfg_lp, cfg_pipe, data_dir, model_type, n_hand_labels, rng_seed):
+    # update cfg_lp
+    cfg_overrides = [{
+        "data": {
+            "data_dir": data_dir,
+        },
+        "training": {
+            "rng_seed_data_pt": rng_seed,
+            "rng_seed_model_pt": rng_seed,
+            "train_frames": n_hand_labels,
+            # Control 3D augmentations for multiview models:
+            "imgaug_3d": cfg_lp.training.get("imgaug_3d", None),  # Read from config file
+        }
+    }]
+    if model_type == 'supervised':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap",
+                "losses_to_use": [],
+            },
+        })
+    elif model_type == 'context':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_mhcrnn",
+                "losses_to_use": [],
+            },
+        })
+    elif model_type == 'semisupervised':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap",
+                "losses_to_use": ["pca_multiview"],
+            },
+        })
+    elif model_type == 'multiview_cnn':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview",
+                "losses_to_use": [],
+                "head": "heatmap_cnn"
+            },
+            
+        })
+    
+    elif model_type == 'multiview_transformer_learnable_crossview':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview",
+                "losses_to_use": [],
+                "head": "feature_transformer_learnable_crossview"
+            },
+            
+        })
+    elif model_type == 'multiview_transformer':
+        # Honor ``losses_to_use`` from the LP yaml (e.g. ``[pca_multiview]`` for chickadee).
+        # Empty list in the base config keeps fully supervised training.
+        losses_to_use = _model_losses_to_use_from_cfg(cfg_lp, default_if_empty=[])
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer",
+                "losses_to_use": losses_to_use,
+                "head": "heatmap_cnn"
+            },
+            
+        })
 
+    elif model_type == 'mvt_3d_loss':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer",
+                "losses_to_use": [],
+                "head": "heatmap_cnn"
+            },
+            
+        })
+    
+    elif model_type == 'mvt_heatmap_3d_loss':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer",
+                "losses_to_use": [],
+                "head": "heatmap_cnn"
+            },
+        })
+        
+    elif model_type == 'mvt_unsupervised_losses':
+        losses_to_use = _model_losses_to_use_from_cfg(
+            cfg_lp, default_if_empty=["pca_multiview"]
+        )
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer",
+                "losses_to_use": losses_to_use,
+                "head": "heatmap_cnn"
+            },
+        })
+
+    elif model_type == 'mvt_semisupervised':
+        losses_to_use = _model_losses_to_use_from_cfg(
+            cfg_lp, default_if_empty=["pca_multiview"]
+        )
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer",
+                "losses_to_use": losses_to_use,
+                "head": "heatmap_cnn"  # Use heatmap_cnn head
+            },
+            "data": {
+                "downsample_factor": 2,  # Set to 2 for heatmap_cnn head
+            },
+        })
+    elif model_type == 'multiview_transformer_mhcrnn':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer_mhcrnn",
+                "losses_to_use": [],
+                "head": "heatmap_mhcrnn"
+            },
+            "data": {
+                "downsample_factor": 2,  # Set to 2 for heatmap_mhcrnn head
+            },
+        })
+    elif model_type == 'mvt_context':
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer_mhcrnn",
+                "losses_to_use": [],
+                "head": "heatmap_mhcrnn_multiview"  # MHCRNN head for multiview with context
+            },
+            "data": {
+                "downsample_factor": 2,  # Set to 2 for heatmap_mhcrnn_multiview head
+            },
+        })
+    elif model_type == 'mvt_transformer_mhcrnn_semisupervised':
+        losses_to_use = _model_losses_to_use_from_cfg(
+            cfg_lp, default_if_empty=["pca_multiview"]
+        )
+        cfg_overrides.append({
+            "model": {
+                "model_type": "heatmap_multiview_transformer_mhcrnn",
+                "losses_to_use": losses_to_use,
+                "head": "heatmap_mhcrnn"
+            },
+            "data": {
+                "downsample_factor": 2,  # Set to 2 for heatmap_mhcrnn head
+            },
+        })
+
+    else:
+        raise ValueError(
+            f'{model_type} is not a valid model type in pipeline cfg; must choose'
+            f'from {VALID_MODEL_TYPES} or add a new model type'
+        )
+    # Parse params from config
+    min_steps = cfg_pipe.train_networks.min_steps
+    max_steps = cfg_pipe.train_networks.max_steps
+    milestone_steps = cfg_pipe.train_networks.milestone_steps
+    unfreezing_step = cfg_pipe.train_networks.unfreezing_step
+    val_check_interval = cfg_pipe.train_networks.val_check_interval
+    
+    # Parse curriculum learning parameters from training config
+    patch_mask_config = cfg_lp.training.get("patch_mask", {})
+    cfg_overrides.append({
+        "training": {
+            "min_steps": min_steps,
+            "max_steps": max_steps,
+            "min_epochs": None,
+            "max_epochs": None,
+            "val_check_interval": val_check_interval,
+            "check_val_every_n_epoch": None,
+            "unfreezing_step": unfreezing_step,
+            "unfreezing_epoch": None,
+            "patch_mask": patch_mask_config,  # Pass the entire patch_mask config
+            "lr_scheduler_params": {
+                "multisteplr": {
+                    "milestone_steps": milestone_steps,
+                    "milestones": None,
+                }
+            },
+        },
+        "eval": {
+            "predict_vids_after_training": False,
+        }
+    })
+    cfg_lp_copy = OmegaConf.merge(cfg_lp, *cfg_overrides)
+    del cfg_lp_copy.training.min_epochs
+    del cfg_lp_copy.training.max_epochs
+    del cfg_lp_copy.training.check_val_every_n_epoch
+    del cfg_lp_copy.training.unfreezing_epoch
+    del cfg_lp_copy.training.lr_scheduler_params.multisteplr.milestones
+    return cfg_lp_copy
 
 
 if __name__ == "__main__":
@@ -153,6 +477,11 @@ if __name__ == "__main__":
         help='absolute path to .yaml configuration file',
         type=str,
     )
+    parser.add_argument(
+        '--for_seed',
+        help='only run a specific seed (useful for distributing training on lightning jobs)',
+        type=int,
+    )
     args = parser.parse_args()
 
-    pipeline(args.config)
+    pipeline(args.config, args.for_seed)

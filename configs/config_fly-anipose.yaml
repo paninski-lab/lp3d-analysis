@@ -4,24 +4,35 @@ data:
     height: 256 # if doesn't work well try both on 384
     width: 256
   # ABSOLUTE path to data directory
+  # data_dir: /tmp/data/fly-anipose
+  # data_dir: /teamspace/studios/this_studio/ZZ_distilation_datasets/pseudo_labeled_dataset_3218
+  # data_dir: /teamspace/studios/this_studio/pseudo_labeled_dataset_3000_fly_non_linear_eks_varinf/fly-anipose
   data_dir: /teamspace/studios/data/fly-anipose
   # ABSOLUTE path to unlabeled videos' directory
+  # video_dir: /tmp/data/fly-anipose/videos
   video_dir: /teamspace/studios/data/fly-anipose/videos
-  # location of labels; for example script, this should be relative to `data_dir`
+  # camera calibration files location
+  # camera_params_file: /teamspace/studios/this_studio/ZZ_distilation_datasets/pseudo_labeled_dataset_3218/calibrations.csv
+  # camera_params_file: /tmp/data/fly-anipose/calibrations.csv
+  camera_params_file: /teamspace/studios/data/fly-anipose/calibrations.csv
+  # camera_params_file: /teamspace/studios/this_studio/pseudo_labeled_dataset_3000_fly_non_linear_eks_varinf/fly-anipose/calibrations.csv
+  # location of labels; for example script, this should be relative to `data_dir`]
   csv_file:
-    - CollectedData_A.csv
-    - CollectedData_B.csv
-    - CollectedData_C.csv
-    - CollectedData_D.csv
-    - CollectedData_E.csv
-    - CollectedData_F.csv
+    - CollectedData_Cam-A.csv
+    - CollectedData_Cam-B.csv
+    - CollectedData_Cam-C.csv
+    - CollectedData_Cam-D.csv
+    - CollectedData_Cam-E.csv
+    - CollectedData_Cam-F.csv
   view_names:
-    - A
-    - B
-    - C
-    - D
-    - E
-    - F
+    - Cam-A
+    - Cam-B
+    - Cam-C
+    - Cam-D
+    - Cam-E
+    - Cam-F
+  
+  
   # downsample heatmaps - 2 | 3
   downsample_factor: 2
   # total number of keypoints
@@ -65,7 +76,7 @@ data:
   # columns that correspond to keypoints only labeled in a single view are omitted
   # TODO: what if a keypoint is labeled in more than 1 but not all views?
   # this info is only used for the multiview pca loss
-  mirrored_column_matches: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+  mirrored_column_matches: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29] # saying use all keypoints 
   columns_for_singleview_pca: []
 
   skeleton:
@@ -94,21 +105,32 @@ data:
     - ['R3C', 'R3D']
     - ['R3D', 'R3E']
 
-
-
+# Latent models configuration for post-processing and usage of EKS multiview - Optional 
+# latent_models: 
+#   # PCA model path for EKS multiview
+#   pca_model_path: /teamspace/studios/this_studio/ZZ_pca_objects/pca_object_inD_fly.pkl  # Set to null if not using PCA model for this dataset
+#   # pca_model_path: null
+#   # FA model path for variance inflation in EKS multiview
+#   fa_model_path: /teamspace/studios/this_studio/ZZ_pca_objects/fa_object_inD_fly.pkl
+#   # fa_model_path: null
 
 training:
   # select from one of several predefined image/video augmentation pipelines
   # default- resizing only
   # dlc- imgaug pipeline implemented in DLC 2.0 package
   # dlc-top-down- dlc augmentations plus vertical and horizontal flips
-  imgaug: dlc
+  imgaug: dlc # dlc-mv for multiple views 
+  # Control whether to use 3D augmentations for multiview models when camera parameters are present
+  # True: Use dlc-mv (no 2D geometric transforms) when camera params exist
+  # False: Use specified imgaug pipeline regardless of camera params
+  # null/None: Default behavior (use dlc-mv when camera params exist)
+  imgaug_3d: True  # This allows you to use regular dlc augmentations even with camera params
   # batch size of labeled data during training
-  train_batch_size: 8
+  train_batch_size: 8 # for the supervised one it is 8 for the ctx 4 
   # batch size of labeled data during validation
-  val_batch_size: 48
+  val_batch_size: 16 # was 16
   # batch size of labeled data during test
-  test_batch_size: 48
+  test_batch_size: 1 #16
   # fraction of labeled data used for training
   train_prob: 0.95
   # fraction of labeled data used for validation (remaining used for test)
@@ -135,57 +157,75 @@ training:
   rng_seed_data_pt: 0
   # rng seed for weight initialization
   rng_seed_model_pt: 0
+  # optimizer: Adam | AdamW.ada
+  # Recommended to use Adam for resnet backbones, and AdamW for ViT backbones.
+  optimizer: Adam
+  optimizer_params:
+    learning_rate: 0.00005 #0.00005 #(1e-3) # was 0.001 # 0.00005
   # learning rate scheduler
   # multisteplr | [todo - reducelronplateau]
   lr_scheduler: multisteplr
   lr_scheduler_params:
     multisteplr:
-      milestones: [150, 200, 250]
+      milestones: [2000, 3000, 4000] 
       gamma: 0.5
   uniform_heatmaps_for_nan_keypoints: true
+  
+  # curriculum learning configuration for patch masking
+  patch_mask:
+    init_step: 700
+    final_step: 5000
+    init_ratio: 0.0
+    final_ratio: 0.0 # to disable patch masking set to 0.0
 
 model:
   # list of unsupervised losses
-  # "pca_singleview" | "pca_multiview" | "temporal" | "unimodal_mse" | "unimodal_kl"
+  # "pca_singleview" | "pca_multiview" | "temporal" | "unimodal_mse" | "unimodal_kl" | "supervised_pairwise_projections"
+  # losses_to_use: ["pca_multiview"]
   losses_to_use: []
   # backbone network:
   # resnet18 | resnet34 | resnet50 | resnet101 | resnet152 | resnet50_contrastive
   # resnet50_animalpose_apose | resnet50_animal_ap10k
   # resnet50_human_jhmdb | resnet50_human_res_rle | resnet50_human_top_res
   # efficientnet_b0 | efficientnet_b1 | efficientnet_b2
-  backbone: resnet50_animal_ap10k
-  # prediction mode - "heatmap" | "regression" | "heatmap_mhcrnn"
-  model_type: heatmap
+  backbone: vits_dino # in general use resnet50_animal_ap10k
+
+  # backbone_checkpoint: /teamspace/studios/data/fly-anipose/pretrained_backbones/mae.safetensors
+  # prediction mode - "heatmap" | "regression" | "heatmap_mhcrnn" | "heatmap_multiview" | "heatmap_multiview_transformer"
+  model_type: heatmap_multiview_transformer #heatmap # this is for the vitb_imagenet
+  # head mode - "heatmap_cnn" | "feature_transformer" | "feature_transformer_learnable" | "feature_transformer_learnable_crossview" | "trans_fusion"
+  head: heatmap_cnn #heatmap_cnn # need to comment out for supervised model 
   # which heatmap loss to use
   # "mse" | "kl" | "js"
   heatmap_loss_type: mse
   # tt expt name
   model_name: test_model
 
+# batch sizes for unlabeled data (for unsupervised data during training and prediction on videos)
 dali:
   general:
     seed: 123456
   base:
-    train:
-      sequence_length: 32
+    train: 
+      sequence_length: 8 # number of consecutive frames 
     predict:
-      sequence_length: 128
+      sequence_length: 16 #128 # for videos - number of consecutive frames for inference each video alone 
   context:
     train:
       batch_size: 16
     predict:
       sequence_length: 96
-
+  
 losses:
   # loss = projection onto the discarded eigenvectors
   pca_multiview:
     # weight in front of PCA loss
-    log_weight: 5.0
+    log_weight: 5.0 # the weight we want for the pca loss. the smaller it is the higher the weight 
     # predictions whould lie within the low-d subspace spanned by these components
     components_to_keep: 3
     # absolute error (in pixels) below which pca loss is zeroed out; if not null, this
     # parameter takes precedence over `empirical_epsilon_percentile`
-    epsilon: null
+    epsilon: null 
   # loss = projection onto the discarded eigenvectors
   pca_singleview:
     # weight in front of PCA loss
@@ -205,6 +245,17 @@ losses:
     # nan removal value.
     # (in prob; heatmaps with max prob values are removed)
     prob_threshold: 0.05
+  
+  # supervised_pairwise_projections:
+  #   # weight in front of pairwise projection loss
+  #   log_weight: 0.3
+  #   # absolute error (in pixels) below which pairwise projection loss is zeroed out; if not null, this
+  #   # parameter takes precedence over `empirical_epsilon_percentile`
+  #   epsilon: null
+
+  # supervised_reprojection_heatmap_mse:
+  #   log_weight: 2.0
+
 
 eval:
   # predict? used in scripts/train_hydra.py
